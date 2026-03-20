@@ -64,6 +64,11 @@ if printf '%s' "$STRIPPED" | grep -qE '\$\(|`'; then
   exit 0
 fi
 
+# Bail on process substitution: <(...) executes the command inside
+if printf '%s' "$STRIPPED" | grep -qE '<\('; then
+  exit 0
+fi
+
 # Bail on output redirection: > or >> write to files
 # First remove known-safe redirection patterns that don't write real files:
 #   2>&1         — merges stderr into stdout
@@ -104,15 +109,25 @@ GH_ASK_REASON=""     # Reason string for gh write commands
 #   Text processing: cat head tail wc grep rg diff uniq cut tr rev tac comm
 #                    paste join fold nl column seq printf echo base64
 #   File info:       ls file stat readlink du df basename dirname realpath
-#   System info:     pwd whoami hostname uname id groups tty date uptime
-#                    free nproc lscpu lsblk printenv
-#   Lookup:          which type command hash man whatis apropos getent
+#   System info:     pwd whoami uname id groups tty uptime
+#                    free nproc lscpu lsblk printenv locale
+#   Process info:    ps pgrep pidof pstree lsof
+#   Networking:      ss netstat
+#   User info:       who w last
+#   System stats:    vmstat iostat mpstat
+#   Hardware info:   lspci lsusb
+#   Filesystem info: findmnt
+#   Package query:   apt-cache dpkg-query
+#   Lookup:          which type hash man whatis apropos getent
 #   Crypto/encoding: sha256sum sha1sum md5sum cksum xxd hexdump od strings
 #   DNS:             nslookup dig host
 #   Shell builtins:  cd true false test [ tput clear
-#   Structured data: jq yq
+#   Structured data: jq
+#
+# Commands with flag-dependent safety that have their own handlers below:
+#   hostname, date, command, yq
 # ---------------------------------------------------------------------------
-SAFE_RE='^(ls|cat|head|tail|wc|file|stat|which|pwd|echo|printenv|realpath|basename|dirname|diff|uniq|cut|tr|cd|grep|rg|true|false|test|\[|jq|yq|date|whoami|hostname|uname|id|groups|tty|getent|sha256sum|sha1sum|md5sum|cksum|xxd|hexdump|od|strings|readlink|du|df|free|uptime|nproc|lscpu|lsblk|column|seq|printf|type|command|hash|man|whatis|apropos|tput|clear|rev|tac|comm|paste|join|fold|nl|base64|nslookup|dig|host)$'
+SAFE_RE='^(ls|cat|head|tail|wc|file|stat|which|pwd|echo|printenv|realpath|basename|dirname|diff|uniq|cut|tr|cd|grep|rg|true|false|test|\[|jq|whoami|uname|id|groups|tty|getent|sha256sum|sha1sum|md5sum|cksum|xxd|hexdump|od|strings|readlink|du|df|free|uptime|nproc|lscpu|lsblk|column|seq|printf|type|hash|man|whatis|apropos|tput|clear|rev|tac|comm|paste|join|fold|nl|base64|nslookup|dig|host|ps|pgrep|pidof|pstree|lsof|ss|netstat|who|w|last|vmstat|iostat|mpstat|lspci|lsusb|locale|apt-cache|dpkg-query|findmnt)$'
 
 for SEG in "${SEGMENTS[@]}"; do
   SEG=$(printf '%s' "$SEG" | sed 's/^[[:space:]]*//')
@@ -131,6 +146,43 @@ for SEG in "${SEGMENTS[@]}"; do
 
   # --- Trivially safe commands (no flag checks needed) ---
   if printf '%s' "$BASE" | grep -qxE "$SAFE_RE"; then
+    continue
+  fi
+
+  # --- hostname: safe for display, dangerous when setting hostname ---
+  # Safe: bare 'hostname', or with display flags (-f, -i, -d, -s, -A, -I, etc.)
+  # Dangerous: 'hostname NAME' (sets hostname), -b (set if empty),
+  #            -F/--file (set from file)
+  if [[ "$BASE" == "hostname" ]]; then
+    # Block -b (set if empty) and -F/--file (set from file)
+    if printf '%s' "$CLEAN" | grep -qE '(\s)-[^-[:space:]]*[bF]\b|(\s)--file\b'; then exit 0; fi
+    # Block if any non-flag word exists after 'hostname' (would set the hostname)
+    HOSTNAME_ARGS=$(printf '%s' "$CLEAN" | sed -E 's/^hostname\s*//')
+    if [[ -n "$HOSTNAME_ARGS" ]] && printf '%s' "$HOSTNAME_ARGS" | grep -qE '(^|\s)[^-]'; then
+      exit 0
+    fi
+    continue
+  fi
+
+  # --- date: safe for display, dangerous when setting clock ---
+  # Safe: all display/format flags (date, date -u, date +FORMAT, date -d STRING)
+  # Dangerous: -s/--set (sets system clock)
+  if [[ "$BASE" == "date" ]]; then
+    if printf '%s' "$CLEAN" | grep -qE '(\s)-[^-[:space:]]*s|(\s)--set\b'; then exit 0; fi
+    continue
+  fi
+
+  # --- command: only allow lookup flags (-v/-V) ---
+  # Safe: 'command -v name' / 'command -V name' (look up command location)
+  # Dangerous: 'command name' (EXECUTES that command)
+  if [[ "$BASE" == "command" ]]; then
+    if printf '%s' "$CLEAN" | grep -qE '(\s)-[vV]\b'; then continue; fi
+    exit 0
+  fi
+
+  # --- yq: safe UNLESS -i/--inplace (modifies files in place) ---
+  if [[ "$BASE" == "yq" ]]; then
+    if printf '%s' "$CLEAN" | grep -qE '(\s|^)(-[^-[:space:]]*i|--inplace)\b'; then exit 0; fi
     continue
   fi
 
@@ -189,7 +241,7 @@ for SEG in "${SEGMENTS[@]}"; do
     # -d/-D (delete), -m/-M (move/rename), -c/-C (copy) are write operations
     # Bare 'git branch' or with -r/-a/-v/--list just lists branches
     if [[ "$GIT_SUB" == "branch" ]]; then
-      if printf '%s' "$CLEAN" | grep -qE '\s-[dDmMcC]\b'; then exit 0; fi
+      if printf '%s' "$CLEAN" | grep -qE '\s-[^-[:space:]]*[dDmMcC]\b'; then exit 0; fi
       continue
     fi
 
@@ -197,7 +249,7 @@ for SEG in "${SEGMENTS[@]}"; do
     # -a (annotate), -s (sign), -d (delete), -f (force) are write operations
     # Bare 'git tag' or with -l/-n/--list/--verify just lists or verifies tags
     if [[ "$GIT_SUB" == "tag" ]]; then
-      if printf '%s' "$CLEAN" | grep -qE '\s-[asdf]\b'; then exit 0; fi
+      if printf '%s' "$CLEAN" | grep -qE '\s-[^-[:space:]]*[asdf]\b'; then exit 0; fi
       continue
     fi
 
@@ -276,6 +328,149 @@ for SEG in "${SEGMENTS[@]}"; do
     exit 0
   fi
 
+  # --- crontab: allow only -l (list) ---
+  # Safe: -l (list crontab), optionally with -u user
+  # Dangerous: -e (edit), -r (remove), -i (interactive), crontab <file> (install)
+  if [[ "$BASE" == "crontab" ]]; then
+    if printf '%s' "$CLEAN" | grep -qE '\s-[^[:space:]]*[eri]'; then exit 0; fi
+    if printf '%s' "$CLEAN" | grep -qE '\s-[^[:space:]]*l'; then continue; fi
+    exit 0  # bare 'crontab' or 'crontab file' → dangerous
+  fi
+
+  # --- dmesg: block clear/write flags ---
+  # Dangerous: -C/--clear, -c/--read-clear, -D/--console-off, -E/--console-on,
+  #            -n/--console-level
+  # Safe: everything else (display/filter flags)
+  if [[ "$BASE" == "dmesg" ]]; then
+    if printf '%s' "$CLEAN" | grep -qE '(\s|^)(-[^-[:space:]]*[CcDEn]\b|--clear|--read-clear|--console-off|--console-on|--console-level)'; then
+      exit 0
+    fi
+    continue
+  fi
+
+  # --- journalctl: block maintenance/write flags ---
+  # Dangerous: --rotate, --vacuum-*, --flush, --sync, --relinquish-var,
+  #            --smart-relinquish-var, --setup-keys, --update-catalog
+  # Safe: everything else (filtering, display, query)
+  if [[ "$BASE" == "journalctl" ]]; then
+    if printf '%s' "$CLEAN" | grep -qE -- '--(rotate|vacuum-size|vacuum-time|vacuum-files|flush|sync|relinquish-var|smart-relinquish-var|setup-keys|update-catalog)\b'; then
+      exit 0
+    fi
+    continue
+  fi
+
+  # --- tree: block file-writing flags ---
+  # Dangerous: -o/--output (writes to file), -R (creates 00Tree.html files)
+  # Safe: everything else (display/filter)
+  if [[ "$BASE" == "tree" ]]; then
+    if printf '%s' "$CLEAN" | grep -qE '(\s|^)-[^-[:space:]]*[oR]|(\s|^)--output\b'; then
+      exit 0
+    fi
+    continue
+  fi
+
+  # --- tar: allow only list mode (-t/--list) ---
+  # Safe: -t/--list (list archive contents) with any display flags
+  # Dangerous: -c (create), -x (extract), -r (append), -u (update),
+  #            -A (catenate), --delete
+  # Also handles GNU-style flags without leading dash: tar tf, tar tvf
+  if [[ "$BASE" == "tar" ]]; then
+    TAR_HAS_LIST=false
+    TAR_HAS_DANGER=false
+    # Check standard flags (-t, --list)
+    if printf '%s' "$CLEAN" | grep -qE '(\s)-[a-zA-Z]*t|(\s)--list(\s|$)'; then TAR_HAS_LIST=true; fi
+    if printf '%s' "$CLEAN" | grep -qE '(\s)-[a-zA-Z]*[cxruA]|(\s)--(create|extract|get|append|update|catenate|concatenate|delete)(\s|$)'; then TAR_HAS_DANGER=true; fi
+    # Check GNU-style no-dash flags (first arg after 'tar')
+    TAR_FIRST_ARG=$(printf '%s' "$CLEAN" | awk '{print $2}')
+    if [[ "$TAR_FIRST_ARG" =~ ^[a-zA-Z]+$ ]]; then
+      [[ "$TAR_FIRST_ARG" == *t* ]] && TAR_HAS_LIST=true
+      [[ "$TAR_FIRST_ARG" == *[cxruA]* ]] && TAR_HAS_DANGER=true
+    fi
+    if [[ "$TAR_HAS_LIST" == true ]]; then
+      if [[ "$TAR_HAS_DANGER" == true ]]; then exit 0; fi
+      continue
+    fi
+    exit 0  # no list flag → not a read operation
+  fi
+
+  # --- dpkg: allow only query flags ---
+  # Safe: -l/--list, -L/--listfiles, -s/--status, -S/--search, -p/--print-avail,
+  #       --print-architecture, --print-foreign-architectures, --get-selections,
+  #       --compare-versions, --validate-*, --assert-*, -C/--audit, -V/--verify
+  # Dangerous: -i/--install, -r/--remove, -P/--purge, --unpack, --configure, etc.
+  if [[ "$BASE" == "dpkg" ]]; then
+    if printf '%s' "$CLEAN" | grep -qE '(\s|^)(-[^-[:space:]]*[irP]\b|--install|--remove|--purge|--unpack|--configure|--triggers-only|--set-selections|--clear-selections|--clear-avail|--add-architecture|--remove-architecture|--update-avail|--merge-avail|--record-avail)'; then
+      exit 0
+    fi
+    if printf '%s' "$CLEAN" | grep -qE '(\s|^)(-[lLsSpCV]\b|--list|--listfiles|--status|--search|--print-avail|--print-architecture|--print-foreign-architectures|--get-selections|--compare-versions|--validate|--assert|--audit|--verify)\b'; then
+      continue
+    fi
+    exit 0  # unknown dpkg usage → fall through
+  fi
+
+  # --- npm: allow read-only subcommands ---
+  # Safe: list, ls, view, info, show, outdated, explain, why, root, prefix,
+  #       bin, fund, help, diff, find-dupes, audit (without fix), config list/get
+  # Dangerous: install, run, exec, publish, cache, config set/edit, etc.
+  if [[ "$BASE" == "npm" ]]; then
+    NPM_SUB=$(printf '%s' "$CLEAN" | sed -E 's/^npm\s+//' | awk '{print $1}')
+    case "$NPM_SUB" in
+      list|ls|view|info|show|outdated|explain|why|root|prefix|bin|fund|help|diff|find-dupes|--help|--version)
+        continue ;;
+      audit)
+        if printf '%s' "$CLEAN" | grep -qE '\bfix\b'; then exit 0; fi
+        continue ;;
+      config)
+        NPM_CFG_ACT=$(printf '%s' "$CLEAN" | sed -E 's/.*\bconfig\s+//' | awk '{print $1}')
+        case "$NPM_CFG_ACT" in list|get|ls) continue ;; *) exit 0 ;; esac
+        ;;
+    esac
+    exit 0
+  fi
+
+  # --- pip / pip3: allow read-only subcommands ---
+  # Safe: list, show, freeze, check, index, help, inspect
+  # Dangerous: install, download, uninstall, wheel, cache, config, hash
+  if [[ "$BASE" == "pip" || "$BASE" == "pip3" ]]; then
+    PIP_SUB=$(printf '%s' "$CLEAN" | sed -E 's/^pip3?\s+//' | awk '{print $1}')
+    case "$PIP_SUB" in
+      list|show|freeze|check|index|help|inspect|--help|--version)
+        continue ;;
+    esac
+    exit 0
+  fi
+
+  # --- gem: allow read-only subcommands ---
+  # Safe: list, info, environment, help, specification, contents, search,
+  #       which, outdated, dependency
+  # Dangerous: install, uninstall, update, push, build, exec, etc.
+  if [[ "$BASE" == "gem" ]]; then
+    GEM_SUB=$(printf '%s' "$CLEAN" | sed -E 's/^gem\s+//' | awk '{print $1}')
+    case "$GEM_SUB" in
+      list|info|environment|help|specification|contents|search|which|outdated|dependency|--help|--version)
+        continue ;;
+    esac
+    exit 0
+  fi
+
+  # --- kubectl: allow read-only subcommands ---
+  # Safe: get, describe, logs, version, api-resources, api-versions, explain,
+  #       top, auth, events, diff, cluster-info
+  # Safe config: view, current-context, get-contexts, get-clusters, get-users
+  # Dangerous: create, apply, delete, patch, exec, run, scale, etc.
+  if [[ "$BASE" == "kubectl" ]]; then
+    KUBE_SUB=$(printf '%s' "$CLEAN" | sed -E 's/^kubectl\s+//' | awk '{print $1}')
+    case "$KUBE_SUB" in
+      get|describe|logs|version|api-resources|api-versions|explain|top|auth|events|diff|cluster-info|--help|--version)
+        continue ;;
+      config)
+        KUBE_CFG_ACT=$(printf '%s' "$CLEAN" | sed -E 's/.*\bconfig\s+//' | awk '{print $1}')
+        case "$KUBE_CFG_ACT" in view|current-context|get-contexts|get-clusters|get-users) continue ;; *) exit 0 ;; esac
+        ;;
+    esac
+    exit 0
+  fi
+
   # --- gh (GitHub CLI): read-only subcommands, ask for writes ---
   # Unlike other commands that silently fall through for writes, gh commands
   # get an explicit "ask" decision with a reason. This provides better UX
@@ -313,10 +508,25 @@ for SEG in "${SEGMENTS[@]}"; do
     continue
   fi
 
+  # --- bash/sh: allow running bash-guard scripts only ---
+  # bash can execute arbitrary code, so it must block by default.
+  # Exception: the guard's own scripts (bash-guard.sh, bash-guard-test.sh)
+  # are read-only (stdin→stdout) and safe to auto-allow. This prevents
+  # unnecessary permission prompts when testing the guard in pipelines
+  # like: echo '...' | bash bash-guard.sh
+  if [[ "$BASE" == "bash" || "$BASE" == "sh" ]]; then
+    SCRIPT_ARG=$(printf '%s' "$CLEAN" | awk '{print $2}')
+    SCRIPT_BASE=$(basename "$SCRIPT_ARG" 2>/dev/null || true)
+    case "$SCRIPT_BASE" in
+      bash-guard.sh|bash-guard-test.sh) continue ;;
+    esac
+    exit 0
+  fi
+
   # --- Unrecognized command → fall through to normal permissions ---
   # Commands not listed above (cp, mv, rm, mkdir, touch, chmod, sed, awk,
-  # tee, xargs, curl, wget, ssh, python, node, etc.) produce no output,
-  # so Claude Code's normal permission system handles them.
+  # tee, xargs, curl, wget, ssh, python, node, make, cargo, go, etc.)
+  # produce no output, so Claude Code's normal permission system handles them.
   exit 0
 done
 
