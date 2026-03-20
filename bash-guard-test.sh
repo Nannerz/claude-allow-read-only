@@ -1264,6 +1264,249 @@ expect_ask 'gh auth login'
 printf ' done'
 
 # ===========================================================================
+# Bug fix: flag bundling (\b word boundary bypass)
+# ===========================================================================
+section "Bug fix: flag bundling (dangerous flag not last)"
+# These used to bypass due to \b word boundary bug
+expect_block 'hostname -ba'         'hostname -b not last'
+expect_block 'hostname -bfa'        'hostname -b mid-bundle'
+expect_block 'git branch -dr origin/old' 'git branch -d not last'
+expect_block 'git tag -dn v1.0'     'git tag -d not last'
+expect_block 'dmesg -Ca'            'dmesg -C not last'
+expect_block 'dmesg -nT'            'dmesg -n not last'
+expect_block 'sort -on out.txt in.txt' 'sort -o not last'
+expect_block 'yq -ia file.yaml'     'yq -i not last'
+# Already-working cases should still work
+expect_block 'hostname -ab'         'hostname -b last (still works)'
+expect_block 'git branch -rd'       'git branch -d last (still works)'
+expect_allow 'hostname -f'          'hostname safe flag unaffected'
+expect_allow 'sort -n input.txt'    'sort safe flag unaffected'
+
+printf ' done'
+
+# ===========================================================================
+# git branch: missing write flags (fix)
+# ===========================================================================
+section "git branch: missing write flags"
+expect_block 'git branch -u origin/main'
+expect_block 'git branch --set-upstream-to=origin/main'
+expect_block 'git branch --unset-upstream'
+expect_block 'git branch -f main HEAD'
+expect_block 'git branch --force main HEAD'
+expect_block 'git branch --edit-description'
+# Existing safe cases still work
+expect_allow 'git branch'
+expect_allow 'git branch -a'
+expect_allow 'git branch -r -v'
+expect_allow 'git branch --list'
+
+printf ' done'
+
+# ===========================================================================
+# Safe: binary inspection and kernel info (new SAFE_RE entries)
+# ===========================================================================
+section "Safe: binary inspection"
+expect_allow 'nm a.out'
+expect_allow 'nm -C --demangle lib.so'
+expect_allow 'objdump -d binary'
+expect_allow 'objdump -t -h program'
+expect_allow 'readelf -h binary'
+expect_allow 'readelf -S -s lib.so'
+
+section "Safe: kernel info"
+expect_allow 'lsmod'
+expect_allow 'modinfo ext4'
+expect_allow 'modinfo -p nvidia'
+
+printf ' done'
+
+# ===========================================================================
+# go handler
+# ===========================================================================
+section "go: safe subcommands"
+expect_allow 'go version'
+expect_allow 'go env'
+expect_allow 'go env GOPATH'
+expect_allow 'go doc fmt.Println'
+expect_allow 'go list ./...'
+expect_allow 'go vet ./...'
+expect_allow 'go tool dist list'
+
+section "go: dangerous subcommands"
+expect_block 'go run main.go'
+expect_block 'go build ./...'
+expect_block 'go install ./...'
+expect_block 'go get github.com/pkg/errors'
+expect_block 'go generate ./...'
+expect_block 'go clean'
+expect_block 'go mod tidy'
+expect_block 'go test ./...'
+
+printf ' done'
+
+# ===========================================================================
+# cargo handler
+# ===========================================================================
+section "cargo: safe subcommands"
+expect_allow 'cargo tree'
+expect_allow 'cargo metadata'
+expect_allow 'cargo search serde'
+expect_allow 'cargo doc'
+expect_allow 'cargo version'
+expect_allow 'cargo --version'
+expect_allow 'cargo verify-project'
+expect_allow 'cargo read-manifest'
+
+section "cargo: dangerous subcommands"
+expect_block 'cargo build'
+expect_block 'cargo run'
+expect_block 'cargo install ripgrep'
+expect_block 'cargo test'
+expect_block 'cargo bench'
+expect_block 'cargo publish'
+expect_block 'cargo clean'
+expect_block 'cargo fix'
+expect_block 'cargo add serde'
+
+printf ' done'
+
+# ===========================================================================
+# yarn handler
+# ===========================================================================
+section "yarn: safe subcommands"
+expect_allow 'yarn list'
+expect_allow 'yarn info lodash'
+expect_allow 'yarn why webpack'
+expect_allow 'yarn outdated'
+expect_allow 'yarn --version'
+
+section "yarn: dangerous subcommands"
+expect_block 'yarn install'
+expect_block 'yarn add lodash'
+expect_block 'yarn remove lodash'
+expect_block 'yarn run build'
+expect_block 'yarn exec tsc'
+expect_block 'yarn publish'
+expect_block 'yarn upgrade'
+expect_block 'yarn dlx create-react-app'
+
+printf ' done'
+
+# ===========================================================================
+# pnpm handler
+# ===========================================================================
+section "pnpm: safe subcommands"
+expect_allow 'pnpm list'
+expect_allow 'pnpm ls'
+expect_allow 'pnpm why webpack'
+expect_allow 'pnpm outdated'
+expect_allow 'pnpm audit'
+expect_allow 'pnpm --version'
+
+section "pnpm: dangerous subcommands"
+expect_block 'pnpm install'
+expect_block 'pnpm add lodash'
+expect_block 'pnpm remove lodash'
+expect_block 'pnpm run build'
+expect_block 'pnpm exec tsc'
+expect_block 'pnpm publish'
+expect_block 'pnpm dlx create-react-app'
+
+printf ' done'
+
+# ===========================================================================
+# brew handler
+# ===========================================================================
+section "brew: safe subcommands"
+expect_allow 'brew list'
+expect_allow 'brew info git'
+expect_allow 'brew search node'
+expect_allow 'brew deps git'
+expect_allow 'brew uses --installed openssl'
+expect_allow 'brew outdated'
+expect_allow 'brew doctor'
+expect_allow 'brew config'
+expect_allow 'brew --version'
+
+section "brew: dangerous subcommands"
+expect_block 'brew install git'
+expect_block 'brew uninstall git'
+expect_block 'brew upgrade'
+expect_block 'brew update'
+expect_block 'brew tap user/repo'
+expect_block 'brew cleanup'
+expect_block 'brew link git'
+expect_block 'brew services start nginx'
+
+printf ' done'
+
+# ===========================================================================
+# apt handler
+# ===========================================================================
+section "apt: safe subcommands"
+expect_allow 'apt list --installed'
+expect_allow 'apt show nginx'
+expect_allow 'apt search python'
+expect_allow 'apt policy nginx'
+expect_allow 'apt depends nginx'
+expect_allow 'apt rdepends nginx'
+expect_allow 'apt --version'
+
+section "apt: dangerous subcommands"
+expect_block 'apt install nginx'
+expect_block 'apt remove nginx'
+expect_block 'apt purge nginx'
+expect_block 'apt update'
+expect_block 'apt upgrade'
+expect_block 'apt autoremove'
+expect_block 'apt edit-sources'
+
+printf ' done'
+
+# ===========================================================================
+# podman handler
+# ===========================================================================
+section "podman: safe (mirrors docker)"
+expect_allow 'podman ps'
+expect_allow 'podman images'
+expect_allow 'podman inspect container1'
+expect_allow 'podman logs container1'
+expect_allow 'podman stats'
+expect_allow 'podman version'
+expect_allow 'podman image ls'
+expect_allow 'podman container ls'
+expect_allow 'podman network ls'
+expect_allow 'podman volume ls'
+expect_allow 'podman pod ls'
+
+section "podman: dangerous"
+expect_block 'podman run ubuntu'
+expect_block 'podman exec -it container1 bash'
+expect_block 'podman build .'
+expect_block 'podman rm container1'
+expect_block 'podman rmi image1'
+expect_block 'podman pull ubuntu'
+expect_block 'podman push image1'
+
+printf ' done'
+
+# ===========================================================================
+# env handler
+# ===========================================================================
+section "env: safe (bare only)"
+expect_allow 'env'
+expect_allow 'env --help'
+expect_allow 'env --version'
+
+section "env: dangerous (runs commands)"
+expect_block 'env bash'
+expect_block 'env -i bash'
+expect_block 'env FOO=bar command'
+expect_block 'env -u VAR command'
+
+printf ' done'
+
+# ===========================================================================
 # Dangerous commands that should always block (unrecognized)
 # ===========================================================================
 section "Unrecognized / dangerous commands"

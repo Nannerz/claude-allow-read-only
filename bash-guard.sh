@@ -123,11 +123,13 @@ GH_ASK_REASON=""     # Reason string for gh write commands
 #   DNS:             nslookup dig host
 #   Shell builtins:  cd true false test [ tput clear
 #   Structured data: jq
+#   Binary inspection: nm objdump readelf
+#   Kernel info:       lsmod modinfo
 #
 # Commands with flag-dependent safety that have their own handlers below:
 #   hostname, date, command, yq
 # ---------------------------------------------------------------------------
-SAFE_RE='^(ls|cat|head|tail|wc|file|stat|which|pwd|echo|printenv|realpath|basename|dirname|diff|uniq|cut|tr|cd|grep|rg|true|false|test|\[|jq|whoami|uname|id|groups|tty|getent|sha256sum|sha1sum|md5sum|cksum|xxd|hexdump|od|strings|readlink|du|df|free|uptime|nproc|lscpu|lsblk|column|seq|printf|type|hash|man|whatis|apropos|tput|clear|rev|tac|comm|paste|join|fold|nl|base64|nslookup|dig|host|ps|pgrep|pidof|pstree|lsof|ss|netstat|who|w|last|vmstat|iostat|mpstat|lspci|lsusb|locale|apt-cache|dpkg-query|findmnt)$'
+SAFE_RE='^(ls|cat|head|tail|wc|file|stat|which|pwd|echo|printenv|realpath|basename|dirname|diff|uniq|cut|tr|cd|grep|rg|true|false|test|\[|jq|whoami|uname|id|groups|tty|getent|sha256sum|sha1sum|md5sum|cksum|xxd|hexdump|od|strings|readlink|du|df|free|uptime|nproc|lscpu|lsblk|column|seq|printf|type|hash|man|whatis|apropos|tput|clear|rev|tac|comm|paste|join|fold|nl|base64|nslookup|dig|host|ps|pgrep|pidof|pstree|lsof|ss|netstat|who|w|last|vmstat|iostat|mpstat|lspci|lsusb|locale|apt-cache|dpkg-query|findmnt|nm|objdump|readelf|lsmod|modinfo)$'
 
 for SEG in "${SEGMENTS[@]}"; do
   SEG=$(printf '%s' "$SEG" | sed 's/^[[:space:]]*//')
@@ -155,7 +157,7 @@ for SEG in "${SEGMENTS[@]}"; do
   #            -F/--file (set from file)
   if [[ "$BASE" == "hostname" ]]; then
     # Block -b (set if empty) and -F/--file (set from file)
-    if printf '%s' "$CLEAN" | grep -qE '(\s)-[^-[:space:]]*[bF]\b|(\s)--file\b'; then exit 0; fi
+    if printf '%s' "$CLEAN" | grep -qE '(\s)-[^-[:space:]]*[bF]|(\s)--file\b'; then exit 0; fi
     # Block if any non-flag word exists after 'hostname' (would set the hostname)
     HOSTNAME_ARGS=$(printf '%s' "$CLEAN" | sed -E 's/^hostname\s*//')
     if [[ -n "$HOSTNAME_ARGS" ]] && printf '%s' "$HOSTNAME_ARGS" | grep -qE '(^|\s)[^-]'; then
@@ -182,7 +184,7 @@ for SEG in "${SEGMENTS[@]}"; do
 
   # --- yq: safe UNLESS -i/--inplace (modifies files in place) ---
   if [[ "$BASE" == "yq" ]]; then
-    if printf '%s' "$CLEAN" | grep -qE '(\s|^)(-[^-[:space:]]*i|--inplace)\b'; then exit 0; fi
+    if printf '%s' "$CLEAN" | grep -qE '(\s|^)(-[^-[:space:]]*i|--inplace\b)'; then exit 0; fi
     continue
   fi
 
@@ -200,7 +202,7 @@ for SEG in "${SEGMENTS[@]}"; do
   # --- sort: safe UNLESS -o/--output flag (writes to file) ---
   # Matches -o, -ro, -nro (combined short flags containing 'o'), --output
   if [[ "$BASE" == "sort" ]]; then
-    if printf '%s' "$CLEAN" | grep -qE '(\s|^)(-[a-zA-Z]*o\b|--output\b)'; then
+    if printf '%s' "$CLEAN" | grep -qE '(\s|^)(-[a-zA-Z]*o|--output\b)'; then
       exit 0
     fi
     continue
@@ -238,10 +240,12 @@ for SEG in "${SEGMENTS[@]}"; do
     fi
 
     # git branch: safe for listing, dangerous with modification flags
-    # -d/-D (delete), -m/-M (move/rename), -c/-C (copy) are write operations
+    # -d/-D (delete), -m/-M (move/rename), -c/-C (copy), -u (set upstream),
+    # -f (force) are write operations
     # Bare 'git branch' or with -r/-a/-v/--list just lists branches
     if [[ "$GIT_SUB" == "branch" ]]; then
-      if printf '%s' "$CLEAN" | grep -qE '\s-[^-[:space:]]*[dDmMcC]\b'; then exit 0; fi
+      if printf '%s' "$CLEAN" | grep -qE '\s-[^-[:space:]]*[dDmMcCuf]'; then exit 0; fi
+      if printf '%s' "$CLEAN" | grep -qE '\s--(set-upstream-to|unset-upstream|edit-description|force)\b'; then exit 0; fi
       continue
     fi
 
@@ -249,7 +253,7 @@ for SEG in "${SEGMENTS[@]}"; do
     # -a (annotate), -s (sign), -d (delete), -f (force) are write operations
     # Bare 'git tag' or with -l/-n/--list/--verify just lists or verifies tags
     if [[ "$GIT_SUB" == "tag" ]]; then
-      if printf '%s' "$CLEAN" | grep -qE '\s-[^-[:space:]]*[asdf]\b'; then exit 0; fi
+      if printf '%s' "$CLEAN" | grep -qE '\s-[^-[:space:]]*[asdf]'; then exit 0; fi
       continue
     fi
 
@@ -342,7 +346,7 @@ for SEG in "${SEGMENTS[@]}"; do
   #            -n/--console-level
   # Safe: everything else (display/filter flags)
   if [[ "$BASE" == "dmesg" ]]; then
-    if printf '%s' "$CLEAN" | grep -qE '(\s|^)(-[^-[:space:]]*[CcDEn]\b|--clear|--read-clear|--console-off|--console-on|--console-level)'; then
+    if printf '%s' "$CLEAN" | grep -qE '(\s|^)(-[^-[:space:]]*[CcDEn]|--clear|--read-clear|--console-off|--console-on|--console-level)'; then
       exit 0
     fi
     continue
@@ -523,10 +527,87 @@ for SEG in "${SEGMENTS[@]}"; do
     exit 0
   fi
 
+  # --- go: subcommand-dependent classification ---
+  if [[ "$BASE" == "go" ]]; then
+    GO_SUB=$(printf '%s' "$CLEAN" | sed -E 's/^go\s+//' | awk '{print $1}')
+    case "$GO_SUB" in
+      version|env|doc|list|vet|tool|help|--help|--version) continue ;;
+    esac
+    exit 0
+  fi
+
+  # --- cargo: subcommand-dependent classification ---
+  if [[ "$BASE" == "cargo" ]]; then
+    CARGO_SUB=$(printf '%s' "$CLEAN" | sed -E 's/^cargo\s+//' | awk '{print $1}')
+    case "$CARGO_SUB" in
+      tree|metadata|search|doc|version|verify-project|read-manifest|help|--help|--version) continue ;;
+    esac
+    exit 0
+  fi
+
+  # --- yarn: subcommand-dependent classification ---
+  if [[ "$BASE" == "yarn" ]]; then
+    YARN_SUB=$(printf '%s' "$CLEAN" | sed -E 's/^yarn\s+//' | awk '{print $1}')
+    case "$YARN_SUB" in
+      list|info|why|licenses|outdated|help|--help|--version) continue ;;
+    esac
+    exit 0
+  fi
+
+  # --- pnpm: subcommand-dependent classification ---
+  if [[ "$BASE" == "pnpm" ]]; then
+    PNPM_SUB=$(printf '%s' "$CLEAN" | sed -E 's/^pnpm\s+//' | awk '{print $1}')
+    case "$PNPM_SUB" in
+      list|ls|why|outdated|audit|help|--help|--version) continue ;;
+    esac
+    exit 0
+  fi
+
+  # --- brew: subcommand-dependent classification ---
+  if [[ "$BASE" == "brew" ]]; then
+    BREW_SUB=$(printf '%s' "$CLEAN" | sed -E 's/^brew\s+//' | awk '{print $1}')
+    case "$BREW_SUB" in
+      list|ls|info|search|deps|uses|outdated|doctor|config|desc|cat|log|home|help|--help|--version) continue ;;
+    esac
+    exit 0
+  fi
+
+  # --- apt: subcommand-dependent classification ---
+  if [[ "$BASE" == "apt" ]]; then
+    APT_SUB=$(printf '%s' "$CLEAN" | sed -E 's/^apt\s+//' | awk '{print $1}')
+    case "$APT_SUB" in
+      list|show|search|policy|depends|rdepends|showsrc|changelog|help|--help|--version) continue ;;
+    esac
+    exit 0
+  fi
+
+  # --- podman: subcommand-dependent classification (mirrors docker) ---
+  if [[ "$BASE" == "podman" ]]; then
+    PODMAN_SUB=$(printf '%s' "$CLEAN" | sed -E 's/^podman\s+//' | awk '{print $1}')
+    case "$PODMAN_SUB" in
+      ps|images|inspect|logs|stats|top|port|version|info|diff|--version|--help) continue ;;
+    esac
+    PODMAN_ACT=$(printf '%s' "$CLEAN" | sed -E 's/^podman\s+//' | awk '{print $2}')
+    case "$PODMAN_SUB" in
+      image)     [[ "$PODMAN_ACT" =~ ^(ls|list|inspect|history)$ ]] && continue ;;
+      container) [[ "$PODMAN_ACT" =~ ^(ls|list|inspect|logs|stats|top|port|diff)$ ]] && continue ;;
+      network)   [[ "$PODMAN_ACT" =~ ^(ls|list|inspect)$ ]] && continue ;;
+      volume)    [[ "$PODMAN_ACT" =~ ^(ls|list|inspect)$ ]] && continue ;;
+      compose)   [[ "$PODMAN_ACT" =~ ^(ps|logs|ls|images|config|version)$ ]] && continue ;;
+      pod)       [[ "$PODMAN_ACT" =~ ^(ls|list|inspect|logs|stats|top)$ ]] && continue ;;
+    esac
+    exit 0
+  fi
+
+  # --- env: safe only when bare (prints environment) ---
+  if [[ "$BASE" == "env" ]]; then
+    ENV_ARGS=$(printf '%s' "$CLEAN" | sed -E 's/^env\s*//')
+    if [[ -z "$ENV_ARGS" ]]; then continue; fi
+    case "$ENV_ARGS" in --help|--version) continue ;; esac
+    exit 0
+  fi
+
   # --- Unrecognized command → fall through to normal permissions ---
-  # Commands not listed above (cp, mv, rm, mkdir, touch, chmod, sed, awk,
-  # tee, xargs, curl, wget, ssh, python, node, make, cargo, go, etc.)
-  # produce no output, so Claude Code's normal permission system handles them.
   exit 0
 done
 
