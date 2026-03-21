@@ -22,7 +22,8 @@
 #   - Over-conservative: may prompt for safe commands, but NEVER auto-allows
 #     a dangerous one
 #   - Chaining-aware: splits on &&, ||, ;, |, & and checks EVERY segment
-#   - Shell-construct-aware: bails on $(…), backticks, and output redirections
+#   - Shell-construct-aware: bails on $(…), backticks, <(…)/>(…), output
+#     redirections, and quoted flags
 #
 # OUT OF SCOPE
 #   Environment variable injection (e.g., LD_PRELOAD=evil.so cat file,
@@ -128,7 +129,7 @@ GH_ASK_REASON=""     # Reason string for gh write commands
 # man pages). None can write files, delete files, or execute other commands.
 #
 # Categories:
-#   Text processing: cat head tail wc grep rg diff cut tr rev tac comm
+#   Text processing: cat head tail wc grep diff cut tr rev tac comm
 #                    paste join fold nl column seq printf echo base64
 #                    more numfmt expand unexpand tsort
 #   File info:       ls file stat readlink du df basename dirname realpath
@@ -141,17 +142,18 @@ GH_ASK_REASON=""     # Reason string for gh write commands
 #   Hardware info:   lspci lsusb
 #   Filesystem info: findmnt lsns
 #   Package query:   apt-cache dpkg-query
-#   Lookup:          which type hash man whatis apropos getent
+#   Lookup:          which type hash whatis apropos getent
 #   Crypto/encoding: sha256sum sha512sum sha1sum md5sum b2sum cksum
 #                    hexdump od strings
 #   DNS:             nslookup dig host
 #   Shell builtins:  cd true false test [ tput clear
 #   Structured data: jq
-#   Binary inspection: nm objdump readelf
+#   Binary inspection: readelf
 #   Kernel info:       lsmod modinfo
 #
 # Commands with flag-dependent safety that have their own handlers below:
-#   hostname, date, command, yq, xxd, less, shuf, uniq, rg, nm, man
+#   hostname, date, command, yq, xxd, rg, nm, objdump, man, less,
+#   shuf, uniq
 # ---------------------------------------------------------------------------
 SAFE_RE='^(ls|cat|head|tail|wc|file|stat|which|pwd|echo|printenv|realpath|basename|dirname|diff|cut|tr|cd|grep|true|false|test|\[|jq|whoami|uname|id|groups|tty|getent|sha256sum|sha512sum|sha1sum|md5sum|b2sum|cksum|hexdump|od|strings|readlink|du|df|free|uptime|nproc|lscpu|lsblk|column|seq|printf|type|hash|whatis|apropos|tput|clear|rev|tac|comm|paste|join|fold|nl|base64|nslookup|dig|host|ps|pgrep|pidof|pstree|lsof|ss|netstat|who|w|last|vmstat|iostat|mpstat|lspci|lsusb|locale|apt-cache|dpkg-query|findmnt|readelf|lsmod|modinfo|more|numfmt|expand|unexpand|tsort|lsns)$'
 
@@ -270,8 +272,9 @@ for SEG in "${SEGMENTS[@]}"; do
   fi
 
   # --- sort: safe UNLESS -o/--output or --compress-program ---
-  # Matches -o, -ro, -nro (combined short flags containing 'o'), --output
-  # --compress-program executes an arbitrary command
+  # Matches -o, -ro, -nro (combined short flags containing 'o'), --output.
+  # --compress-program executes an arbitrary command.
+  # Uses prefix matching (--outp, --compr) to catch GNU long option abbreviations.
   if [[ "$BASE" == "sort" ]]; then
     if printf '%s' "$CLEAN" | grep -qE '(\s|^)(-[a-zA-Z]*o|--outp|--compr)'; then
       exit 0
@@ -303,8 +306,9 @@ for SEG in "${SEGMENTS[@]}"; do
     # e.g., 'git --no-pager log' → 'log', 'git -C /path diff' → 'diff'
     GIT_SUB=$(printf '%s' "$CLEAN" | sed -E 's/^git\s+//' | sed -E 's/^(--no-pager\s+|-C\s+[^ ]+\s+)*//' | awk '{print $1}')
 
-    # Block flags that write files or execute programs across multiple subcommands
-    # --upload-pack/-u executes arbitrary program (used by ls-remote, fetch, etc.)
+    # Block flags that write files or execute programs across multiple subcommands.
+    # --output writes to file (diff/log/show). --upload-pack executes arbitrary program.
+    # Uses prefix matching to catch GNU long option abbreviations.
     if printf '%s' "$CLEAN" | grep -qE '\s(--outp|--upload-p)'; then exit 0; fi
 
     # Always-safe git subcommands (purely read-only, no flags can write)
@@ -405,8 +409,8 @@ for SEG in "${SEGMENTS[@]}"; do
       container) [[ "$DOCKER_ACT" =~ ^(ls|list|inspect|logs|stats|top|port|diff)$ ]] && continue ;;
       network)   [[ "$DOCKER_ACT" =~ ^(ls|list|inspect)$ ]] && continue ;;
       volume)    [[ "$DOCKER_ACT" =~ ^(ls|list|inspect)$ ]] && continue ;;
-      # compose: ps/logs/ls/images are queries, config shows resolved config,
-      # version shows version info. All read-only.
+      # compose: ps/logs/ls/images/version are read-only queries.
+      # config excluded — its -o/--output flag writes files.
       compose)   [[ "$DOCKER_ACT" =~ ^(ps|logs|ls|images|version)$ ]] && continue ;;
     esac
     # Unrecognized (run, exec, build, rm, rmi, push, pull, stop, start, etc.)
@@ -438,6 +442,7 @@ for SEG in "${SEGMENTS[@]}"; do
   # Dangerous: -C/--clear, -c/--read-clear, -D/--console-off, -E/--console-on,
   #            -n/--console-level
   # Safe: everything else (display/filter flags)
+  # Long options use prefix matching to catch GNU abbreviations.
   if [[ "$BASE" == "dmesg" ]]; then
     if printf '%s' "$CLEAN" | grep -qE '(\s|^)(-[^-[:space:]]*[CcDEn]|--cl|--read-c|--console-o|--console-l)'; then
       exit 0
@@ -447,7 +452,8 @@ for SEG in "${SEGMENTS[@]}"; do
 
   # --- journalctl: block maintenance/write flags ---
   # Dangerous: --rotate, --vacuum-*, --flush, --sync, --relinquish-var,
-  #            --smart-relinquish-var, --setup-keys, --update-catalog
+  #            --smart-relinquish-var, --setup-keys, --update-catalog,
+  #            --cursor-file (writes cursor position to file)
   # Safe: everything else (filtering, display, query)
   if [[ "$BASE" == "journalctl" ]]; then
     if printf '%s' "$CLEAN" | grep -qE -- '--(rotate|vacuum-size|vacuum-time|vacuum-files|flush|sync|relinquish-var|smart-relinquish-var|setup-keys|update-catalog|cursor-file)\b'; then
@@ -510,7 +516,8 @@ for SEG in "${SEGMENTS[@]}"; do
 
   # --- npm: allow read-only subcommands ---
   # Safe: list, ls, view, info, show, outdated, explain, why, root, prefix,
-  #       bin, fund, help, diff, find-dupes, audit (without fix), config list/get
+  #       bin, diff, find-dupes, audit (without fix), config list/get
+  # Conditionally safe: fund (no --browser), help (no --viewer)
   # Dangerous: install, run, exec, publish, cache, config set/edit, etc.
   if [[ "$BASE" == "npm" ]]; then
     NPM_SUB=$(printf '%s' "$CLEAN" | sed -E 's/^npm\s+//' | awk '{print $1}')
@@ -559,7 +566,8 @@ for SEG in "${SEGMENTS[@]}"; do
 
   # --- kubectl: allow read-only subcommands ---
   # Safe: get, describe, logs, version, api-resources, api-versions, explain,
-  #       top, auth, events, diff, cluster-info
+  #       top, events, diff, cluster-info
+  # Safe auth: can-i, whoami (reconcile is dangerous — writes RBAC resources)
   # Safe config: view, current-context, get-contexts, get-clusters, get-users
   # Dangerous: create, apply, delete, patch, exec, run, scale, etc.
   if [[ "$BASE" == "kubectl" ]]; then
