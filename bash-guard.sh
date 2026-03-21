@@ -116,9 +116,9 @@ GH_ASK_REASON=""     # Reason string for gh write commands
 # man pages). None can write files, delete files, or execute other commands.
 #
 # Categories:
-#   Text processing: cat head tail wc grep rg diff uniq cut tr rev tac comm
+#   Text processing: cat head tail wc grep rg diff cut tr rev tac comm
 #                    paste join fold nl column seq printf echo base64
-#                    less more shuf numfmt expand unexpand tsort
+#                    more numfmt expand unexpand tsort
 #   File info:       ls file stat readlink du df basename dirname realpath
 #   System info:     pwd whoami uname id groups tty uptime
 #                    free nproc lscpu lsblk printenv locale
@@ -139,9 +139,9 @@ GH_ASK_REASON=""     # Reason string for gh write commands
 #   Kernel info:       lsmod modinfo
 #
 # Commands with flag-dependent safety that have their own handlers below:
-#   hostname, date, command, yq, xxd
+#   hostname, date, command, yq, xxd, less, shuf, uniq
 # ---------------------------------------------------------------------------
-SAFE_RE='^(ls|cat|head|tail|wc|file|stat|which|pwd|echo|printenv|realpath|basename|dirname|diff|uniq|cut|tr|cd|grep|rg|true|false|test|\[|jq|whoami|uname|id|groups|tty|getent|sha256sum|sha512sum|sha1sum|md5sum|b2sum|cksum|hexdump|od|strings|readlink|du|df|free|uptime|nproc|lscpu|lsblk|column|seq|printf|type|hash|man|whatis|apropos|tput|clear|rev|tac|comm|paste|join|fold|nl|base64|nslookup|dig|host|ps|pgrep|pidof|pstree|lsof|ss|netstat|who|w|last|vmstat|iostat|mpstat|lspci|lsusb|locale|apt-cache|dpkg-query|findmnt|nm|objdump|readelf|lsmod|modinfo|less|more|shuf|numfmt|expand|unexpand|tsort|lsns)$'
+SAFE_RE='^(ls|cat|head|tail|wc|file|stat|which|pwd|echo|printenv|realpath|basename|dirname|diff|cut|tr|cd|grep|rg|true|false|test|\[|jq|whoami|uname|id|groups|tty|getent|sha256sum|sha512sum|sha1sum|md5sum|b2sum|cksum|hexdump|od|strings|readlink|du|df|free|uptime|nproc|lscpu|lsblk|column|seq|printf|type|hash|man|whatis|apropos|tput|clear|rev|tac|comm|paste|join|fold|nl|base64|nslookup|dig|host|ps|pgrep|pidof|pstree|lsof|ss|netstat|who|w|last|vmstat|iostat|mpstat|lspci|lsusb|locale|apt-cache|dpkg-query|findmnt|nm|objdump|readelf|lsmod|modinfo|more|numfmt|expand|unexpand|tsort|lsns)$'
 
 for SEG in "${SEGMENTS[@]}"; do
   SEG=$(printf '%s' "$SEG" | sed 's/^[[:space:]]*//')
@@ -150,8 +150,9 @@ for SEG in "${SEGMENTS[@]}"; do
   # Strip env var prefixes: FOO=bar BAR=baz command ... → command ...
   # But first bail if any dangerous env vars are set — these can inject code
   # execution into otherwise-safe commands (e.g., PAGER="cmd" git log,
-  # LESSOPEN="| cmd" less file, GIT_EXTERNAL_DIFF="cmd" git diff)
-  if printf '%s' "$SEG" | grep -qiE '^(PAGER|MANPAGER|GIT_EXTERNAL_DIFF|GIT_SSH_COMMAND|GIT_EDITOR|VISUAL|EDITOR|LESSOPEN|LESSCLOSE|GIT_PAGER|BROWSER)='; then
+  # LESSOPEN="| cmd" less file, LD_PRELOAD=evil.so cat file)
+  # Check ALL prefixes, not just the first (LANG=C PAGER=evil must be caught)
+  if printf '%s' "$SEG" | grep -qiE '(^|\s)(PAGER|MANPAGER|GIT_EXTERNAL_DIFF|GIT_SSH_COMMAND|GIT_EDITOR|VISUAL|EDITOR|LESSOPEN|LESSCLOSE|GIT_PAGER|BROWSER|LD_PRELOAD|LD_LIBRARY_PATH|DYLD_INSERT_LIBRARIES|BASH_ENV|ENV|CDPATH|BASH_FUNC_[a-z])='; then
     exit 0
   fi
   CLEAN=$(printf '%s' "$SEG" | sed -E 's/^([A-Za-z_][A-Za-z0-9_]*=[^ ]* +)*//')
@@ -209,6 +210,28 @@ for SEG in "${SEGMENTS[@]}"; do
   # --- xxd: safe UNLESS -r (reverse mode can write files) ---
   if [[ "$BASE" == "xxd" ]]; then
     if printf '%s' "$CLEAN" | grep -qE '(\s|^)-[^-[:space:]]*r'; then exit 0; fi
+    continue
+  fi
+
+  # --- less: safe UNLESS -o/-O (log-file writes output to file) ---
+  if [[ "$BASE" == "less" ]]; then
+    if printf '%s' "$CLEAN" | grep -qE '(\s|^)-[^-[:space:]]*[oO]|(\s|^)--(log-file|LOG-FILE)\b'; then exit 0; fi
+    continue
+  fi
+
+  # --- shuf: safe UNLESS -o/--output (writes to file) ---
+  if [[ "$BASE" == "shuf" ]]; then
+    if printf '%s' "$CLEAN" | grep -qE '(\s|^)-[^-[:space:]]*o|(\s|^)--output\b'; then exit 0; fi
+    continue
+  fi
+
+  # --- uniq: safe UNLESS output file positional arg is given ---
+  # Usage: uniq [OPTIONS] [INPUT [OUTPUT]]. Two positional args means the
+  # second is an output file. We allow only zero or one non-flag arg.
+  if [[ "$BASE" == "uniq" ]]; then
+    UNIQ_ARGS=$(printf '%s' "$CLEAN" | sed -E 's/^uniq\s*//' | sed -E 's/-[^ ]+ *//g' | sed 's/^ *//')
+    UNIQ_ARGC=$(printf '%s' "$UNIQ_ARGS" | awk '{print NF}')
+    if [[ "$UNIQ_ARGC" -gt 1 ]]; then exit 0; fi
     continue
   fi
 
@@ -504,8 +527,12 @@ for SEG in "${SEGMENTS[@]}"; do
   if [[ "$BASE" == "kubectl" ]]; then
     KUBE_SUB=$(printf '%s' "$CLEAN" | sed -E 's/^kubectl\s+//' | awk '{print $1}')
     case "$KUBE_SUB" in
-      get|describe|logs|version|api-resources|api-versions|explain|top|auth|events|diff|cluster-info|--help|--version)
+      get|describe|logs|version|api-resources|api-versions|explain|top|events|diff|cluster-info|--help|--version)
         continue ;;
+      auth)
+        KUBE_AUTH_ACT=$(printf '%s' "$CLEAN" | sed -E 's/.*\bauth\s+//' | awk '{print $1}')
+        case "$KUBE_AUTH_ACT" in can-i|whoami|"") continue ;; *) exit 0 ;; esac
+        ;;
       config)
         KUBE_CFG_ACT=$(printf '%s' "$CLEAN" | sed -E 's/.*\bconfig\s+//' | awk '{print $1}')
         case "$KUBE_CFG_ACT" in view|current-context|get-contexts|get-clusters|get-users) continue ;; *) exit 0 ;; esac
@@ -575,7 +602,15 @@ for SEG in "${SEGMENTS[@]}"; do
   if [[ "$BASE" == "go" ]]; then
     GO_SUB=$(printf '%s' "$CLEAN" | sed -E 's/^go\s+//' | awk '{print $1}')
     case "$GO_SUB" in
-      version|env|doc|list|vet|help|--help|--version) continue ;;
+      version|doc|list|help|--help|--version) continue ;;
+      env)
+        # go env -w (write) and -u (unset) modify persistent config
+        if printf '%s' "$CLEAN" | grep -qE '\s-[wu]'; then exit 0; fi
+        continue ;;
+      vet)
+        # go vet -vettool=FILE executes an arbitrary binary
+        if printf '%s' "$CLEAN" | grep -qE '\s-vettool\b'; then exit 0; fi
+        continue ;;
     esac
     exit 0
   fi

@@ -1395,8 +1395,13 @@ expect_allow 'git -C /tmp status'          'git -C (safe, changes dir)'
 
 section "Security: dangerous env vars blocked"
 expect_block 'PAGER=evil git log'          'PAGER= injection'
+expect_block 'MANPAGER=evil git log'       'MANPAGER= injection'
 expect_block 'LESSOPEN="| evil" less file' 'LESSOPEN= injection'
+expect_block 'LESSCLOSE="| evil" less file' 'LESSCLOSE= injection'
 expect_block 'EDITOR=evil git commit'      'EDITOR= injection'
+expect_block 'VISUAL=evil git commit'      'VISUAL= injection'
+expect_block 'GIT_EDITOR=evil git commit'  'GIT_EDITOR= injection'
+expect_block 'GIT_EXTERNAL_DIFF=evil git diff' 'GIT_EXTERNAL_DIFF= injection'
 expect_block 'GIT_SSH_COMMAND=evil git push' 'GIT_SSH_COMMAND= injection'
 expect_block 'BROWSER=evil brew home'      'BROWSER= injection'
 # Non-dangerous env vars still work
@@ -1426,6 +1431,50 @@ expect_block 'docker container rm abc123'     'docker container rm'
 expect_block 'podman pod rm pod1'             'podman pod rm'
 expect_block 'podman pod create'              'podman pod create'
 expect_block 'command -p ls'                  'command -p (executes)'
+
+section "Security: LD_PRELOAD / BASH_ENV injection"
+expect_block 'LD_PRELOAD=/tmp/evil.so cat /etc/passwd'   'LD_PRELOAD injection'
+expect_block 'LD_LIBRARY_PATH=/tmp/evil ls'              'LD_LIBRARY_PATH injection'
+expect_block 'BASH_ENV=/tmp/evil.sh ls'                  'BASH_ENV injection'
+
+section "Security: env var prefix bypass (non-first position)"
+expect_block 'LANG=C PAGER=/tmp/evil git log'            'PAGER after safe prefix'
+expect_block 'LANG=C GIT_SSH_COMMAND=evil git ls-remote' 'GIT_SSH_COMMAND after prefix'
+expect_block 'LANG=C LD_PRELOAD=evil.so cat file'        'LD_PRELOAD after prefix'
+
+section "Security: less -o/-O writes to file"
+expect_allow 'less file.txt'
+expect_allow 'less -N file.txt'
+expect_block 'less -o /tmp/log file.txt'      'less -o (log-file)'
+expect_block 'less -O /tmp/log file.txt'      'less -O (LOG-FILE)'
+expect_block 'less --log-file=/tmp/x file'    'less --log-file'
+
+section "Security: shuf -o writes to file"
+expect_allow 'shuf file.txt'
+expect_allow 'shuf -n 5 file.txt'
+expect_block 'shuf -o /tmp/out file.txt'      'shuf -o (output file)'
+expect_block 'shuf --output=/tmp/out file'    'shuf --output'
+
+section "Security: uniq with output file"
+expect_allow 'uniq'
+expect_allow 'uniq -c'
+expect_allow 'uniq file.txt'                  'uniq with input only'
+expect_allow 'uniq -c file.txt'               'uniq -c with input'
+expect_block 'uniq file.txt output.txt'       'uniq with output file'
+expect_block 'uniq -c file.txt output.txt'    'uniq -c with output file'
+
+section "Security: go env -w and go vet -vettool"
+expect_allow 'go env'
+expect_allow 'go env GOPATH'
+expect_block 'go env -w CC=/tmp/evil'         'go env -w (writes config)'
+expect_block 'go env -u GOPATH'               'go env -u (unsets config)'
+expect_allow 'go vet ./...'
+expect_block 'go vet -vettool=/tmp/evil .'    'go vet -vettool (executes)'
+
+section "Security: kubectl auth reconcile"
+expect_allow 'kubectl auth can-i create pods'
+expect_allow 'kubectl auth whoami'
+expect_block 'kubectl auth reconcile -f rbac.yaml' 'kubectl auth reconcile'
 
 printf ' done'
 
