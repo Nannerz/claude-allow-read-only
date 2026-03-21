@@ -1528,6 +1528,17 @@ expect_block 'hostname --fi=/etc/hostname'         'hostname --fi (abbreviated -
 expect_block 'git ls-remote --upload-p=evil origin' 'git --upload-p (abbreviated)'
 expect_block 'ip -ba /tmp/cmds.txt'                'ip -ba (abbreviated -batch)'
 
+section "Security: objdump --plugin"
+expect_allow 'objdump -d binary'
+expect_block 'objdump --plugin=evil.so -d binary'  'objdump --plugin'
+expect_block 'objdump --plug=evil.so -d binary'    'objdump --plug (abbreviated)'
+
+section "Security: deeper GNU abbreviation bypasses"
+expect_block 'git log --outp=/tmp/evil'            'git --outp (abbreviated --output)'
+expect_block 'sort --compr=evil /dev/null'         'sort --compr (abbreviated --compress-program)'
+expect_block 'tar -tf archive --info=evil.sh'      'tar --info (abbreviated --info-script)'
+expect_block 'tar -tf archive --index=/tmp/evil'   'tar --index (abbreviated --index-file)'
+
 section "Security: quoted flags bypass"
 expect_block 'find . "-exec" evil {} \;'           'quoted -exec'
 expect_block 'find . "-delete"'                    'quoted -delete'

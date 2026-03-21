@@ -153,7 +153,7 @@ GH_ASK_REASON=""     # Reason string for gh write commands
 # Commands with flag-dependent safety that have their own handlers below:
 #   hostname, date, command, yq, xxd, less, shuf, uniq, rg, nm, man
 # ---------------------------------------------------------------------------
-SAFE_RE='^(ls|cat|head|tail|wc|file|stat|which|pwd|echo|printenv|realpath|basename|dirname|diff|cut|tr|cd|grep|true|false|test|\[|jq|whoami|uname|id|groups|tty|getent|sha256sum|sha512sum|sha1sum|md5sum|b2sum|cksum|hexdump|od|strings|readlink|du|df|free|uptime|nproc|lscpu|lsblk|column|seq|printf|type|hash|whatis|apropos|tput|clear|rev|tac|comm|paste|join|fold|nl|base64|nslookup|dig|host|ps|pgrep|pidof|pstree|lsof|ss|netstat|who|w|last|vmstat|iostat|mpstat|lspci|lsusb|locale|apt-cache|dpkg-query|findmnt|objdump|readelf|lsmod|modinfo|more|numfmt|expand|unexpand|tsort|lsns)$'
+SAFE_RE='^(ls|cat|head|tail|wc|file|stat|which|pwd|echo|printenv|realpath|basename|dirname|diff|cut|tr|cd|grep|true|false|test|\[|jq|whoami|uname|id|groups|tty|getent|sha256sum|sha512sum|sha1sum|md5sum|b2sum|cksum|hexdump|od|strings|readlink|du|df|free|uptime|nproc|lscpu|lsblk|column|seq|printf|type|hash|whatis|apropos|tput|clear|rev|tac|comm|paste|join|fold|nl|base64|nslookup|dig|host|ps|pgrep|pidof|pstree|lsof|ss|netstat|who|w|last|vmstat|iostat|mpstat|lspci|lsusb|locale|apt-cache|dpkg-query|findmnt|readelf|lsmod|modinfo|more|numfmt|expand|unexpand|tsort|lsns)$'
 
 for SEG in "${SEGMENTS[@]}"; do
   SEG=$(printf '%s' "$SEG" | sed 's/^[[:space:]]*//')
@@ -224,8 +224,8 @@ for SEG in "${SEGMENTS[@]}"; do
     continue
   fi
 
-  # --- nm: safe UNLESS --plugin (loads arbitrary shared library) ---
-  if [[ "$BASE" == "nm" ]]; then
+  # --- nm / objdump: safe UNLESS --plugin (loads arbitrary shared library) ---
+  if [[ "$BASE" == "nm" || "$BASE" == "objdump" ]]; then
     if printf '%s' "$CLEAN" | grep -qE '\s--plug'; then exit 0; fi
     continue
   fi
@@ -273,7 +273,7 @@ for SEG in "${SEGMENTS[@]}"; do
   # Matches -o, -ro, -nro (combined short flags containing 'o'), --output
   # --compress-program executes an arbitrary command
   if [[ "$BASE" == "sort" ]]; then
-    if printf '%s' "$CLEAN" | grep -qE '(\s|^)(-[a-zA-Z]*o|--output|--compress)'; then
+    if printf '%s' "$CLEAN" | grep -qE '(\s|^)(-[a-zA-Z]*o|--outp|--compr)'; then
       exit 0
     fi
     continue
@@ -305,7 +305,7 @@ for SEG in "${SEGMENTS[@]}"; do
 
     # Block flags that write files or execute programs across multiple subcommands
     # --upload-pack/-u executes arbitrary program (used by ls-remote, fetch, etc.)
-    if printf '%s' "$CLEAN" | grep -qE '\s(--output|--upload-p)'; then exit 0; fi
+    if printf '%s' "$CLEAN" | grep -qE '\s(--outp|--upload-p)'; then exit 0; fi
 
     # Always-safe git subcommands (purely read-only, no flags can write)
     case "$GIT_SUB" in
@@ -485,7 +485,7 @@ for SEG in "${SEGMENTS[@]}"; do
     fi
     # These flags execute arbitrary commands or write files even in list mode.
     # Use short prefixes to catch GNU long option abbreviations (e.g., --to-com for --to-command)
-    if printf '%s' "$CLEAN" | grep -qE '(\s)-[a-zA-Z]*[IF]|(\s)--(use|check|info-s|new-v|to-c|index-f|rsh|rmt)'; then exit 0; fi
+    if printf '%s' "$CLEAN" | grep -qE '(\s)-[a-zA-Z]*[IF]|(\s)--(use|check|info|new-v|to-c|index|rsh|rmt)'; then exit 0; fi
     if [[ "$TAR_HAS_LIST" == true ]]; then
       if [[ "$TAR_HAS_DANGER" == true ]]; then exit 0; fi
       continue
