@@ -68,6 +68,12 @@ CMD=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty')
 # always over-conservative: may prompt unnecessarily, never auto-allows danger.
 STRIPPED=$(printf '%s' "$CMD" | sed -E 's/"[^"]*"/"_"/g' | sed -E "s/'[^']*'/'_'/g")
 
+# Bail on quoted flags: quoting a flag like "-exec" hides it from flag checks
+# but bash strips quotes before passing to the command, so the flag still works
+if printf '%s' "$CMD" | grep -qE "[\"']-"; then
+  exit 0
+fi
+
 # Bail on command substitution: $(...) or backticks can embed any command
 if printf '%s' "$STRIPPED" | grep -qE '\$\(|`'; then
   exit 0
@@ -267,7 +273,7 @@ for SEG in "${SEGMENTS[@]}"; do
   # Matches -o, -ro, -nro (combined short flags containing 'o'), --output
   # --compress-program executes an arbitrary command
   if [[ "$BASE" == "sort" ]]; then
-    if printf '%s' "$CLEAN" | grep -qE '(\s|^)(-[a-zA-Z]*o|--output|--compress-p)'; then
+    if printf '%s' "$CLEAN" | grep -qE '(\s|^)(-[a-zA-Z]*o|--output|--compress)'; then
       exit 0
     fi
     continue
@@ -280,7 +286,7 @@ for SEG in "${SEGMENTS[@]}"; do
   # Uses word-boundary matching so 'address' doesn't match 'add'
   if [[ "$BASE" == "ip" ]]; then
     # -batch/-b reads commands from file (can contain any ip subcommand)
-    if printf '%s' "$CLEAN" | grep -qE '(\s|^)(-b\b|-bat|--bat)'; then exit 0; fi
+    if printf '%s' "$CLEAN" | grep -qE '(\s|^)(-b|-bat|--bat)'; then exit 0; fi
     if printf '%s' "$CLEAN" | grep -qE '\b(add|del|delete|change|replace|flush|save|restore|set|append|exec)\b'; then
       exit 0
     fi
@@ -479,7 +485,7 @@ for SEG in "${SEGMENTS[@]}"; do
     fi
     # These flags execute arbitrary commands or write files even in list mode.
     # Use short prefixes to catch GNU long option abbreviations (e.g., --to-com for --to-command)
-    if printf '%s' "$CLEAN" | grep -qE '(\s)-[a-zA-Z]*[IF]|(\s)--(use-c|checkpoint-a|info-s|new-v|to-c|index-f|rsh|rmt)'; then exit 0; fi
+    if printf '%s' "$CLEAN" | grep -qE '(\s)-[a-zA-Z]*[IF]|(\s)--(use|check|info-s|new-v|to-c|index-f|rsh|rmt)'; then exit 0; fi
     if [[ "$TAR_HAS_LIST" == true ]]; then
       if [[ "$TAR_HAS_DANGER" == true ]]; then exit 0; fi
       continue

@@ -1518,12 +1518,20 @@ expect_block 'npm help --viewer=evil test'         'npm help --viewer'
 
 section "Security: GNU long option abbreviation"
 expect_block 'sort --compress-prog=evil file'      'sort --compress-prog (abbreviated)'
+expect_block 'sort --compress=evil file'           'sort --compress (abbreviated)'
 expect_block 'tar --to-com=evil -tf archive'       'tar --to-com (abbreviated)'
+expect_block 'tar --use=evil -tf archive'          'tar --use (abbreviated)'
 expect_block 'date --se="2020-01-01"'              'date --se (abbreviated --set)'
 expect_block 'nm --plug=evil.so binary'            'nm --plug (abbreviated --plugin)'
 expect_block 'man --pag=evil ls'                   'man --pag (abbreviated --pager)'
 expect_block 'hostname --fi=/etc/hostname'         'hostname --fi (abbreviated --file)'
 expect_block 'git ls-remote --upload-p=evil origin' 'git --upload-p (abbreviated)'
+expect_block 'ip -ba /tmp/cmds.txt'                'ip -ba (abbreviated -batch)'
+
+section "Security: quoted flags bypass"
+expect_block 'find . "-exec" evil {} \;'           'quoted -exec'
+expect_block 'find . "-delete"'                    'quoted -delete'
+expect_block "sort '-o' /tmp/out file"             'single-quoted -o'
 
 section "Security: nm --plugin"
 expect_allow 'nm a.out'
