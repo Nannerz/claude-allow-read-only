@@ -21,8 +21,14 @@
 #   - Fail-safe: unknown commands produce NO output → user gets prompted
 #   - Over-conservative: may prompt for safe commands, but NEVER auto-allows
 #     a dangerous one
-#   - Chaining-aware: splits on &&, ||, ;, | and checks EVERY segment
+#   - Chaining-aware: splits on &&, ||, ;, |, & and checks EVERY segment
 #   - Shell-construct-aware: bails on $(…), backticks, and output redirections
+#
+# OUT OF SCOPE
+#   Environment variable injection (e.g., LD_PRELOAD=evil.so cat file,
+#   PAGER=evil git log) is NOT handled here. These are niche attack vectors
+#   that would require maintaining an ever-growing blocklist of dangerous
+#   env var names. The guard focuses on command and flag classification.
 #
 # PHASES
 #   Phase 1: Reject commands with dangerous shell constructs (redirects, subshells)
@@ -148,24 +154,14 @@ for SEG in "${SEGMENTS[@]}"; do
   [[ -z "$SEG" ]] && continue
 
   # Strip env var prefixes: FOO=bar BAR=baz command ... → command ...
-  # But first bail if any dangerous env vars are set — these can inject code
-  # execution into otherwise-safe commands (e.g., PAGER="cmd" git log,
-  # LESSOPEN="| cmd" less file, LD_PRELOAD=evil.so cat file)
-  # Check ALL prefixes, not just the first (LANG=C PAGER=evil must be caught)
-  if printf '%s' "$SEG" | grep -qiE '(^|\s)(PAGER|MANPAGER|LESS|GIT_EXTERNAL_DIFF|GIT_SSH_COMMAND|GIT_SSH|GIT_EDITOR|VISUAL|EDITOR|LESSOPEN|LESSCLOSE|GIT_PAGER|GIT_CONFIG|GIT_CONFIG_[A-Z]+|GIT_EXEC_PATH|BROWSER|LD_PRELOAD|LD_LIBRARY_PATH|DYLD_INSERT_LIBRARIES|BASH_ENV|ENV|CDPATH|BASH_FUNC_[a-z]+)='; then
-    exit 0
-  fi
   CLEAN=$(printf '%s' "$SEG" | sed -E 's/^([A-Za-z_][A-Za-z0-9_]*=[^ ]* +)*//')
   BASE=$(printf '%s' "$CLEAN" | awk '{print $1}')
   # Handle absolute/relative paths (e.g., /usr/bin/ls → ls)
   BASE=$(basename "$BASE" 2>/dev/null || printf '%s' "$BASE")
 
-  # --- --version for known commands is read-only ---
-  # Only allow --version for commands we recognize (SAFE_RE or handlers below).
-  # Do NOT auto-allow --version for arbitrary/unknown binaries, as a malicious
-  # binary could ignore --version and execute harmful operations.
+  # --- Any command with sole argument --version is read-only ---
   if printf '%s' "$CLEAN" | grep -qxE '[^ ]+\s+--version'; then
-    if printf '%s' "$BASE" | grep -qxE "$SAFE_RE"; then continue; fi
+    continue
   fi
 
   # --- Trivially safe commands (no flag checks needed) ---

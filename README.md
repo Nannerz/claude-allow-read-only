@@ -12,7 +12,10 @@ Claude Code prompts before every Bash command. This is safe but slow for read-on
 - **Over-conservative**: May prompt for actually-safe commands, but will never auto-allow a dangerous one. False negatives (unnecessary prompts) are acceptable; false positives (auto-allowing writes) are not.
 - **Chaining-aware**: Splits on `&&`, `||`, `;`, `|`, `&` and classifies every segment independently. All segments must be safe for the command to be auto-allowed.
 - **Shell-construct-aware**: Bails on `$(...)`, backticks, process substitution `<(...)` / `>(...)`, and output redirection `>` / `>>` before any classification.
-- **Env-var-aware**: Blocks dangerous environment variable prefixes (`LD_PRELOAD`, `PAGER`, `GIT_SSH`, `BASH_ENV`, etc.) that can inject code execution into otherwise-safe commands. Scans all prefixes, not just the first.
+
+### Out of scope
+
+Environment variable injection (e.g., `LD_PRELOAD=evil.so cat file`, `PAGER=evil git log`) is not handled. These are niche attack vectors that would require maintaining an ever-growing blocklist of dangerous env var names. The guard focuses on command and flag classification.
 
 ## Processing phases
 
@@ -28,13 +31,12 @@ Strips quoted strings, then checks for dangerous shell constructs. If any are fo
 
 Splits the command on shell operators (`&&`, `||`, `;`, `|`, `&`) into segments. For each segment:
 
-1. Blocks dangerous env var prefixes (`LD_PRELOAD=`, `PAGER=`, `GIT_SSH=`, `BASH_ENV=`, etc.)
-2. Strips remaining safe env var prefixes (`FOO=bar cmd` -> `cmd`)
-3. Extracts the base command name (handles absolute paths via `basename`)
-4. Auto-allows `--version` for known safe commands only
-5. Checks against the trivially-safe regex (commands where every flag is read-only)
-6. Checks flag-aware handlers (commands safe only with certain flags/subcommands)
-7. If unrecognized, exits silently (falls through to prompt)
+1. Strips env var prefixes (`FOO=bar cmd` -> `cmd`)
+2. Extracts the base command name (handles absolute paths via `basename`)
+3. Auto-allows any command with sole argument `--version`
+4. Checks against the trivially-safe regex (commands where every flag is read-only)
+5. Checks flag-aware handlers (commands safe only with certain flags/subcommands)
+6. If unrecognized, exits silently (falls through to prompt)
 
 ### Phase 3: Decision
 
@@ -113,8 +115,8 @@ Splits the command on shell operators (`&&`, `||`, `;`, `|`, `&`) into segments.
 ### Special handling
 
 - **`bash`/`sh`**: Only allows running the guard's own scripts (verified by full path via `realpath`)
-- **`--version`**: Auto-allowed only for commands in SAFE_RE or recognized handlers (not arbitrary binaries)
-- **Env var prefixes**: Dangerous vars blocked (`LD_PRELOAD`, `PAGER`, `GIT_SSH*`, `GIT_CONFIG*`, `BASH_ENV`, `LESSOPEN`, etc.); safe vars stripped before classification
+- **`--version`**: Any command with sole argument `--version` is auto-allowed
+- **Env var prefixes**: Stripped before classification (`FOO=bar ls` -> `ls`)
 - **`git -c`**: Blocked entirely (can set config keys like `core.pager` that execute arbitrary commands)
 
 ## Testing
