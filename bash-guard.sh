@@ -139,9 +139,9 @@ GH_ASK_REASON=""     # Reason string for gh write commands
 #   Kernel info:       lsmod modinfo
 #
 # Commands with flag-dependent safety that have their own handlers below:
-#   hostname, date, command, yq, xxd, less, shuf, uniq
+#   hostname, date, command, yq, xxd, less, shuf, uniq, rg
 # ---------------------------------------------------------------------------
-SAFE_RE='^(ls|cat|head|tail|wc|file|stat|which|pwd|echo|printenv|realpath|basename|dirname|diff|cut|tr|cd|grep|rg|true|false|test|\[|jq|whoami|uname|id|groups|tty|getent|sha256sum|sha512sum|sha1sum|md5sum|b2sum|cksum|hexdump|od|strings|readlink|du|df|free|uptime|nproc|lscpu|lsblk|column|seq|printf|type|hash|man|whatis|apropos|tput|clear|rev|tac|comm|paste|join|fold|nl|base64|nslookup|dig|host|ps|pgrep|pidof|pstree|lsof|ss|netstat|who|w|last|vmstat|iostat|mpstat|lspci|lsusb|locale|apt-cache|dpkg-query|findmnt|nm|objdump|readelf|lsmod|modinfo|more|numfmt|expand|unexpand|tsort|lsns)$'
+SAFE_RE='^(ls|cat|head|tail|wc|file|stat|which|pwd|echo|printenv|realpath|basename|dirname|diff|cut|tr|cd|grep|true|false|test|\[|jq|whoami|uname|id|groups|tty|getent|sha256sum|sha512sum|sha1sum|md5sum|b2sum|cksum|hexdump|od|strings|readlink|du|df|free|uptime|nproc|lscpu|lsblk|column|seq|printf|type|hash|man|whatis|apropos|tput|clear|rev|tac|comm|paste|join|fold|nl|base64|nslookup|dig|host|ps|pgrep|pidof|pstree|lsof|ss|netstat|who|w|last|vmstat|iostat|mpstat|lspci|lsusb|locale|apt-cache|dpkg-query|findmnt|nm|objdump|readelf|lsmod|modinfo|more|numfmt|expand|unexpand|tsort|lsns)$'
 
 for SEG in "${SEGMENTS[@]}"; do
   SEG=$(printf '%s' "$SEG" | sed 's/^[[:space:]]*//')
@@ -152,7 +152,7 @@ for SEG in "${SEGMENTS[@]}"; do
   # execution into otherwise-safe commands (e.g., PAGER="cmd" git log,
   # LESSOPEN="| cmd" less file, LD_PRELOAD=evil.so cat file)
   # Check ALL prefixes, not just the first (LANG=C PAGER=evil must be caught)
-  if printf '%s' "$SEG" | grep -qiE '(^|\s)(PAGER|MANPAGER|GIT_EXTERNAL_DIFF|GIT_SSH_COMMAND|GIT_EDITOR|VISUAL|EDITOR|LESSOPEN|LESSCLOSE|GIT_PAGER|BROWSER|LD_PRELOAD|LD_LIBRARY_PATH|DYLD_INSERT_LIBRARIES|BASH_ENV|ENV|CDPATH|BASH_FUNC_[a-z])='; then
+  if printf '%s' "$SEG" | grep -qiE '(^|\s)(PAGER|MANPAGER|LESS|GIT_EXTERNAL_DIFF|GIT_SSH_COMMAND|GIT_EDITOR|VISUAL|EDITOR|LESSOPEN|LESSCLOSE|GIT_PAGER|GIT_CONFIG|GIT_CONFIG_GLOBAL|GIT_CONFIG_SYSTEM|GIT_EXEC_PATH|BROWSER|LD_PRELOAD|LD_LIBRARY_PATH|DYLD_INSERT_LIBRARIES|BASH_ENV|ENV|CDPATH|BASH_FUNC_[a-z])='; then
     exit 0
   fi
   CLEAN=$(printf '%s' "$SEG" | sed -E 's/^([A-Za-z_][A-Za-z0-9_]*=[^ ]* +)*//')
@@ -213,6 +213,12 @@ for SEG in "${SEGMENTS[@]}"; do
     continue
   fi
 
+  # --- rg: safe UNLESS --pre (executes arbitrary preprocessor command) ---
+  if [[ "$BASE" == "rg" ]]; then
+    if printf '%s' "$CLEAN" | grep -qE '\s--pre\b'; then exit 0; fi
+    continue
+  fi
+
   # --- less: safe UNLESS -o/-O (log-file writes output to file) ---
   if [[ "$BASE" == "less" ]]; then
     if printf '%s' "$CLEAN" | grep -qE '(\s|^)-[^-[:space:]]*[oO]|(\s|^)--(log-file|LOG-FILE)\b'; then exit 0; fi
@@ -246,10 +252,11 @@ for SEG in "${SEGMENTS[@]}"; do
     continue
   fi
 
-  # --- sort: safe UNLESS -o/--output flag (writes to file) ---
+  # --- sort: safe UNLESS -o/--output or --compress-program ---
   # Matches -o, -ro, -nro (combined short flags containing 'o'), --output
+  # --compress-program executes an arbitrary command
   if [[ "$BASE" == "sort" ]]; then
-    if printf '%s' "$CLEAN" | grep -qE '(\s|^)(-[a-zA-Z]*o|--output\b)'; then
+    if printf '%s' "$CLEAN" | grep -qE '(\s|^)(-[a-zA-Z]*o|--output\b|--compress-program\b)'; then
       exit 0
     fi
     continue
@@ -261,6 +268,8 @@ for SEG in "${SEGMENTS[@]}"; do
   #                    set (e.g., 'ip link set'), append
   # Uses word-boundary matching so 'address' doesn't match 'add'
   if [[ "$BASE" == "ip" ]]; then
+    # -batch/-b reads commands from file (can contain any ip subcommand)
+    if printf '%s' "$CLEAN" | grep -qE '(\s|^)(-b\b|-batch\b|--batch\b)'; then exit 0; fi
     if printf '%s' "$CLEAN" | grep -qE '\b(add|del|delete|change|replace|flush|save|restore|set|append)\b'; then
       exit 0
     fi
@@ -452,6 +461,8 @@ for SEG in "${SEGMENTS[@]}"; do
       [[ "$TAR_FIRST_ARG" == *t* ]] && TAR_HAS_LIST=true
       [[ "$TAR_FIRST_ARG" == *[cxruA]* ]] && TAR_HAS_DANGER=true
     fi
+    # --use-compress-program / -I executes arbitrary command even in list mode
+    if printf '%s' "$CLEAN" | grep -qE '(\s)-[a-zA-Z]*I|(\s)--use-compress-program\b'; then exit 0; fi
     if [[ "$TAR_HAS_LIST" == true ]]; then
       if [[ "$TAR_HAS_DANGER" == true ]]; then exit 0; fi
       continue

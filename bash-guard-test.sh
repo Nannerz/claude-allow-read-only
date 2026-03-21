@@ -1476,6 +1476,35 @@ expect_allow 'kubectl auth can-i create pods'
 expect_allow 'kubectl auth whoami'
 expect_block 'kubectl auth reconcile -f rbac.yaml' 'kubectl auth reconcile'
 
+section "Security: rg --pre executes command"
+expect_allow 'rg pattern'
+expect_allow 'rg -i pattern dir/'
+expect_block 'rg --pre /tmp/evil pattern .'  'rg --pre (code execution)'
+
+section "Security: sort --compress-program"
+expect_block 'sort --compress-program=evil file'  'sort --compress-program'
+
+section "Security: tar -I / --use-compress-program"
+expect_block 'tar -I /tmp/evil -tf archive'       'tar -I (compress program)'
+expect_block 'tar --use-compress-program=evil -tf archive' 'tar --use-compress-program'
+
+section "Security: ip -batch / -b"
+expect_block 'ip -batch /tmp/cmds.txt'            'ip -batch'
+expect_block 'ip -b /tmp/cmds.txt'                'ip -b'
+
+section "Security: LESS env var injection"
+expect_block 'LESS=-ofile less /etc/passwd'        'LESS= env var injection'
+
+section "Security: GIT_CONFIG* / GIT_EXEC_PATH"
+expect_block 'GIT_CONFIG_GLOBAL=/tmp/evil.conf git log' 'GIT_CONFIG_GLOBAL injection'
+expect_block 'GIT_EXEC_PATH=/tmp git log'          'GIT_EXEC_PATH injection'
+expect_block 'GIT_CONFIG=/tmp/evil git status'      'GIT_CONFIG injection'
+
+section "Security: missing env var tests"
+expect_block 'DYLD_INSERT_LIBRARIES=/tmp/evil.dylib cat file' 'DYLD_INSERT_LIBRARIES'
+expect_block 'CDPATH=/tmp/evil cd mydir'            'CDPATH injection'
+expect_block 'ENV=/tmp/evil.sh ls'                  'ENV injection'
+
 printf ' done'
 
 # ===========================================================================
