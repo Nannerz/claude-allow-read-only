@@ -152,14 +152,19 @@ printf ' done'
 # ===========================================================================
 # Global: --version passthrough
 # ===========================================================================
-section "--version for any command"
-expect_allow 'python --version'
-expect_allow 'node --version'
-expect_allow 'rustc --version'
-expect_allow 'cargo --version'
-expect_allow 'ruby --version'
-expect_allow 'java --version'
-expect_allow 'gcc --version'
+section "--version for known commands"
+expect_allow 'ls --version'           'SAFE_RE command --version'
+expect_allow 'grep --version'         'SAFE_RE command --version'
+expect_allow 'cargo --version'        'handler command --version'
+expect_allow 'npm --version'          'handler command --version'
+expect_allow 'go --version'           'handler command --version'
+
+section "--version blocked for unknown commands"
+expect_block 'python --version'       'unknown binary --version'
+expect_block 'node --version'
+expect_block 'rustc --version'
+expect_block 'ruby --version'
+expect_block '/tmp/evil --version'    'arbitrary path --version'
 
 printf ' done'
 
@@ -1504,6 +1509,12 @@ section "Security: missing env var tests"
 expect_block 'DYLD_INSERT_LIBRARIES=/tmp/evil.dylib cat file' 'DYLD_INSERT_LIBRARIES'
 expect_block 'CDPATH=/tmp/evil cd mydir'            'CDPATH injection'
 expect_block 'ENV=/tmp/evil.sh ls'                  'ENV injection'
+
+section "Security: GIT_CONFIG_COUNT env var injection"
+expect_block 'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.pager GIT_CONFIG_VALUE_0=evil git log' 'GIT_CONFIG_COUNT'
+
+section "Security: GIT_SSH env var injection"
+expect_block 'GIT_SSH=/tmp/evil git ls-remote origin' 'GIT_SSH injection'
 
 printf ' done'
 

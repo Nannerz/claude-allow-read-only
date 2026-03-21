@@ -152,7 +152,7 @@ for SEG in "${SEGMENTS[@]}"; do
   # execution into otherwise-safe commands (e.g., PAGER="cmd" git log,
   # LESSOPEN="| cmd" less file, LD_PRELOAD=evil.so cat file)
   # Check ALL prefixes, not just the first (LANG=C PAGER=evil must be caught)
-  if printf '%s' "$SEG" | grep -qiE '(^|\s)(PAGER|MANPAGER|LESS|GIT_EXTERNAL_DIFF|GIT_SSH_COMMAND|GIT_EDITOR|VISUAL|EDITOR|LESSOPEN|LESSCLOSE|GIT_PAGER|GIT_CONFIG|GIT_CONFIG_GLOBAL|GIT_CONFIG_SYSTEM|GIT_EXEC_PATH|BROWSER|LD_PRELOAD|LD_LIBRARY_PATH|DYLD_INSERT_LIBRARIES|BASH_ENV|ENV|CDPATH|BASH_FUNC_[a-z])='; then
+  if printf '%s' "$SEG" | grep -qiE '(^|\s)(PAGER|MANPAGER|LESS|GIT_EXTERNAL_DIFF|GIT_SSH_COMMAND|GIT_SSH|GIT_EDITOR|VISUAL|EDITOR|LESSOPEN|LESSCLOSE|GIT_PAGER|GIT_CONFIG|GIT_CONFIG_[A-Z]+|GIT_EXEC_PATH|BROWSER|LD_PRELOAD|LD_LIBRARY_PATH|DYLD_INSERT_LIBRARIES|BASH_ENV|ENV|CDPATH|BASH_FUNC_[a-z]+)='; then
     exit 0
   fi
   CLEAN=$(printf '%s' "$SEG" | sed -E 's/^([A-Za-z_][A-Za-z0-9_]*=[^ ]* +)*//')
@@ -160,9 +160,12 @@ for SEG in "${SEGMENTS[@]}"; do
   # Handle absolute/relative paths (e.g., /usr/bin/ls → ls)
   BASE=$(basename "$BASE" 2>/dev/null || printf '%s' "$BASE")
 
-  # --- Any command with sole argument --version is read-only ---
+  # --- --version for known commands is read-only ---
+  # Only allow --version for commands we recognize (SAFE_RE or handlers below).
+  # Do NOT auto-allow --version for arbitrary/unknown binaries, as a malicious
+  # binary could ignore --version and execute harmful operations.
   if printf '%s' "$CLEAN" | grep -qxE '[^ ]+\s+--version'; then
-    continue
+    if printf '%s' "$BASE" | grep -qxE "$SAFE_RE"; then continue; fi
   fi
 
   # --- Trivially safe commands (no flag checks needed) ---
