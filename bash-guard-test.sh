@@ -708,7 +708,7 @@ expect_allow 'docker compose ps'
 expect_allow 'docker compose logs'
 expect_allow 'docker compose ls'
 expect_allow 'docker compose images'
-expect_allow 'docker compose config'
+expect_block 'docker compose config'  'docker compose config (has -o flag)'
 expect_allow 'docker compose version'
 
 section "docker: dangerous"
@@ -1492,6 +1492,38 @@ expect_block 'tar --rmt-command=evil -tf host:/a'   'tar --rmt-command'
 section "Security: git --upload-pack"
 expect_block 'git ls-remote --upload-pack=evil origin' 'git --upload-pack'
 expect_allow 'git ls-remote origin'                 'git ls-remote without --upload-pack'
+
+section "Security: git branch NAME creates branch"
+expect_block 'git branch new-feature'              'git branch NAME (creates branch)'
+expect_block 'git branch new-feature HEAD~3'       'git branch NAME COMMIT'
+expect_allow 'git branch'                          'bare git branch (lists)'
+expect_allow 'git branch -a'                       'git branch -a (lists all)'
+expect_allow 'git branch -r -v'                    'git branch -r -v (lists remote)'
+expect_allow 'git branch --list'                   'git branch --list'
+expect_allow 'git branch --contains HEAD'          'git branch --contains'
+
+section "Security: go -toolexec"
+expect_block 'go list -toolexec=evil ./...'        'go list -toolexec'
+expect_block 'go vet -toolexec=evil ./...'         'go vet -toolexec'
+
+section "Security: docker compose config -o"
+expect_block 'docker compose config -o /tmp/out'   'docker compose config -o'
+expect_block 'podman compose config -o /tmp/out'   'podman compose config -o'
+
+section "Security: npm fund --browser / help --viewer"
+expect_allow 'npm fund'
+expect_allow 'npm help install'
+expect_block 'npm fund --browser=evil'             'npm fund --browser'
+expect_block 'npm help --viewer=evil test'         'npm help --viewer'
+
+section "Security: GNU long option abbreviation"
+expect_block 'sort --compress-prog=evil file'      'sort --compress-prog (abbreviated)'
+expect_block 'tar --to-com=evil -tf archive'       'tar --to-com (abbreviated)'
+expect_block 'date --se="2020-01-01"'              'date --se (abbreviated --set)'
+expect_block 'nm --plug=evil.so binary'            'nm --plug (abbreviated --plugin)'
+expect_block 'man --pag=evil ls'                   'man --pag (abbreviated --pager)'
+expect_block 'hostname --fi=/etc/hostname'         'hostname --fi (abbreviated --file)'
+expect_block 'git ls-remote --upload-p=evil origin' 'git --upload-p (abbreviated)'
 
 section "Security: nm --plugin"
 expect_allow 'nm a.out'

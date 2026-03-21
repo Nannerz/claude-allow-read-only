@@ -175,7 +175,7 @@ for SEG in "${SEGMENTS[@]}"; do
   #            -F/--file (set from file)
   if [[ "$BASE" == "hostname" ]]; then
     # Block -b (set if empty) and -F/--file (set from file)
-    if printf '%s' "$CLEAN" | grep -qE '(\s)-[^-[:space:]]*[bF]|(\s)--file\b'; then exit 0; fi
+    if printf '%s' "$CLEAN" | grep -qE '(\s)-[^-[:space:]]*[bF]|(\s)--fi'; then exit 0; fi
     # Block if any non-flag word exists after 'hostname' (would set the hostname)
     HOSTNAME_ARGS=$(printf '%s' "$CLEAN" | sed -E 's/^hostname\s*//')
     if [[ -n "$HOSTNAME_ARGS" ]] && printf '%s' "$HOSTNAME_ARGS" | grep -qE '(^|\s)[^-]'; then
@@ -188,7 +188,7 @@ for SEG in "${SEGMENTS[@]}"; do
   # Safe: all display/format flags (date, date -u, date +FORMAT, date -d STRING)
   # Dangerous: -s/--set (sets system clock)
   if [[ "$BASE" == "date" ]]; then
-    if printf '%s' "$CLEAN" | grep -qE '(\s)-[^-[:space:]]*s|(\s)--set\b'; then exit 0; fi
+    if printf '%s' "$CLEAN" | grep -qE '(\s)-[^-[:space:]]*s|(\s)--se'; then exit 0; fi
     continue
   fi
 
@@ -202,7 +202,7 @@ for SEG in "${SEGMENTS[@]}"; do
 
   # --- yq: safe UNLESS -i/--inplace (modifies files in place) ---
   if [[ "$BASE" == "yq" ]]; then
-    if printf '%s' "$CLEAN" | grep -qE '(\s|^)(-[^-[:space:]]*i|--inplace\b)'; then exit 0; fi
+    if printf '%s' "$CLEAN" | grep -qE '(\s|^)(-[^-[:space:]]*i|--inp)'; then exit 0; fi
     continue
   fi
 
@@ -214,31 +214,31 @@ for SEG in "${SEGMENTS[@]}"; do
 
   # --- rg: safe UNLESS --pre (executes arbitrary preprocessor command) ---
   if [[ "$BASE" == "rg" ]]; then
-    if printf '%s' "$CLEAN" | grep -qE '\s--pre\b'; then exit 0; fi
+    if printf '%s' "$CLEAN" | grep -qE '\s--pre'; then exit 0; fi
     continue
   fi
 
   # --- nm: safe UNLESS --plugin (loads arbitrary shared library) ---
   if [[ "$BASE" == "nm" ]]; then
-    if printf '%s' "$CLEAN" | grep -qE '\s--plugin\b'; then exit 0; fi
+    if printf '%s' "$CLEAN" | grep -qE '\s--plug'; then exit 0; fi
     continue
   fi
 
   # --- man: safe UNLESS -P/--pager or -H/--html (executes arbitrary program) ---
   if [[ "$BASE" == "man" ]]; then
-    if printf '%s' "$CLEAN" | grep -qE '(\s)-[^-[:space:]]*[PH]|(\s)--(pager|html)\b'; then exit 0; fi
+    if printf '%s' "$CLEAN" | grep -qE '(\s)-[^-[:space:]]*[PH]|(\s)--(pag|htm)'; then exit 0; fi
     continue
   fi
 
   # --- less: safe UNLESS -o/-O (log-file writes output to file) ---
   if [[ "$BASE" == "less" ]]; then
-    if printf '%s' "$CLEAN" | grep -qE '(\s|^)-[^-[:space:]]*[oO]|(\s|^)--(log-file|LOG-FILE)\b'; then exit 0; fi
+    if printf '%s' "$CLEAN" | grep -qE '(\s|^)-[^-[:space:]]*[oO]|(\s|^)--(log-f|LOG-F)'; then exit 0; fi
     continue
   fi
 
   # --- shuf: safe UNLESS -o/--output (writes to file) ---
   if [[ "$BASE" == "shuf" ]]; then
-    if printf '%s' "$CLEAN" | grep -qE '(\s|^)-[^-[:space:]]*o|(\s|^)--output\b'; then exit 0; fi
+    if printf '%s' "$CLEAN" | grep -qE '(\s|^)-[^-[:space:]]*o|(\s|^)--out'; then exit 0; fi
     continue
   fi
 
@@ -267,7 +267,7 @@ for SEG in "${SEGMENTS[@]}"; do
   # Matches -o, -ro, -nro (combined short flags containing 'o'), --output
   # --compress-program executes an arbitrary command
   if [[ "$BASE" == "sort" ]]; then
-    if printf '%s' "$CLEAN" | grep -qE '(\s|^)(-[a-zA-Z]*o|--output\b|--compress-program\b)'; then
+    if printf '%s' "$CLEAN" | grep -qE '(\s|^)(-[a-zA-Z]*o|--output|--compress-p)'; then
       exit 0
     fi
     continue
@@ -280,7 +280,7 @@ for SEG in "${SEGMENTS[@]}"; do
   # Uses word-boundary matching so 'address' doesn't match 'add'
   if [[ "$BASE" == "ip" ]]; then
     # -batch/-b reads commands from file (can contain any ip subcommand)
-    if printf '%s' "$CLEAN" | grep -qE '(\s|^)(-b\b|-batch\b|--batch\b)'; then exit 0; fi
+    if printf '%s' "$CLEAN" | grep -qE '(\s|^)(-b\b|-bat|--bat)'; then exit 0; fi
     if printf '%s' "$CLEAN" | grep -qE '\b(add|del|delete|change|replace|flush|save|restore|set|append|exec)\b'; then
       exit 0
     fi
@@ -299,7 +299,7 @@ for SEG in "${SEGMENTS[@]}"; do
 
     # Block flags that write files or execute programs across multiple subcommands
     # --upload-pack/-u executes arbitrary program (used by ls-remote, fetch, etc.)
-    if printf '%s' "$CLEAN" | grep -qE '\s(--output|--upload-pack)\b'; then exit 0; fi
+    if printf '%s' "$CLEAN" | grep -qE '\s(--output|--upload-p)'; then exit 0; fi
 
     # Always-safe git subcommands (purely read-only, no flags can write)
     case "$GIT_SUB" in
@@ -321,7 +321,11 @@ for SEG in "${SEGMENTS[@]}"; do
     if [[ "$GIT_SUB" == "branch" ]]; then
       if printf '%s' "$CLEAN" | grep -qE '\s-[^-[:space:]]*[dDmMcCuf]'; then exit 0; fi
       if printf '%s' "$CLEAN" | grep -qE '\s--(delete|move|copy|set-upstream-to|unset-upstream|edit-description|force)\b'; then exit 0; fi
-      continue
+      # Allow only with read flags or bare 'git branch'; block 'git branch NAME' (creates branch)
+      if printf '%s' "$CLEAN" | grep -qE '\s(-[^-[:space:]]*[rav]|--list|--contains|--merged|--no-merged|--points-at|--sort)\b'; then continue; fi
+      BRANCH_REST=$(printf '%s' "$CLEAN" | sed -E 's/.*\bbranch(\s|$)//')
+      if [[ -z "$BRANCH_REST" || "$BRANCH_REST" =~ ^[[:space:]]*$ ]]; then continue; fi
+      exit 0
     fi
 
     # git tag: safe for listing/verifying, dangerous for creation/deletion
@@ -397,7 +401,7 @@ for SEG in "${SEGMENTS[@]}"; do
       volume)    [[ "$DOCKER_ACT" =~ ^(ls|list|inspect)$ ]] && continue ;;
       # compose: ps/logs/ls/images are queries, config shows resolved config,
       # version shows version info. All read-only.
-      compose)   [[ "$DOCKER_ACT" =~ ^(ps|logs|ls|images|config|version)$ ]] && continue ;;
+      compose)   [[ "$DOCKER_ACT" =~ ^(ps|logs|ls|images|version)$ ]] && continue ;;
     esac
     # Unrecognized (run, exec, build, rm, rmi, push, pull, stop, start, etc.)
     exit 0
@@ -429,7 +433,7 @@ for SEG in "${SEGMENTS[@]}"; do
   #            -n/--console-level
   # Safe: everything else (display/filter flags)
   if [[ "$BASE" == "dmesg" ]]; then
-    if printf '%s' "$CLEAN" | grep -qE '(\s|^)(-[^-[:space:]]*[CcDEn]|--clear|--read-clear|--console-off|--console-on|--console-level)'; then
+    if printf '%s' "$CLEAN" | grep -qE '(\s|^)(-[^-[:space:]]*[CcDEn]|--cl|--read-c|--console-o|--console-l)'; then
       exit 0
     fi
     continue
@@ -473,8 +477,9 @@ for SEG in "${SEGMENTS[@]}"; do
       [[ "$TAR_FIRST_ARG" == *t* ]] && TAR_HAS_LIST=true
       [[ "$TAR_FIRST_ARG" == *[cxruA]* ]] && TAR_HAS_DANGER=true
     fi
-    # These flags execute arbitrary commands even in list mode
-    if printf '%s' "$CLEAN" | grep -qE '(\s)-[a-zA-Z]*[IF]|(\s)--(use-compress-program|checkpoint-action|info-script|new-volume-script|to-command|index-file|rsh-command|rmt-command)\b'; then exit 0; fi
+    # These flags execute arbitrary commands or write files even in list mode.
+    # Use short prefixes to catch GNU long option abbreviations (e.g., --to-com for --to-command)
+    if printf '%s' "$CLEAN" | grep -qE '(\s)-[a-zA-Z]*[IF]|(\s)--(use-c|checkpoint-a|info-s|new-v|to-c|index-f|rsh|rmt)'; then exit 0; fi
     if [[ "$TAR_HAS_LIST" == true ]]; then
       if [[ "$TAR_HAS_DANGER" == true ]]; then exit 0; fi
       continue
@@ -504,7 +509,11 @@ for SEG in "${SEGMENTS[@]}"; do
   if [[ "$BASE" == "npm" ]]; then
     NPM_SUB=$(printf '%s' "$CLEAN" | sed -E 's/^npm\s+//' | awk '{print $1}')
     case "$NPM_SUB" in
-      list|ls|view|info|show|outdated|explain|why|root|prefix|bin|fund|help|diff|find-dupes|--help|--version)
+      list|ls|view|info|show|outdated|explain|why|root|prefix|bin|diff|find-dupes|--help|--version)
+        continue ;;
+      fund|help)
+        # --browser/--viewer flags execute arbitrary programs
+        if printf '%s' "$CLEAN" | grep -qE '\s--(brow|view)'; then exit 0; fi
         continue ;;
       audit)
         if printf '%s' "$CLEAN" | grep -qE '\bfix\b'; then exit 0; fi
@@ -625,14 +634,15 @@ for SEG in "${SEGMENTS[@]}"; do
   if [[ "$BASE" == "go" ]]; then
     GO_SUB=$(printf '%s' "$CLEAN" | sed -E 's/^go\s+//' | awk '{print $1}')
     case "$GO_SUB" in
-      version|doc|list|help|--help|--version) continue ;;
+      version|doc|help|--help|--version) continue ;;
       env)
         # go env -w (write) and -u (unset) modify persistent config
         if printf '%s' "$CLEAN" | grep -qE '\s-[wu]'; then exit 0; fi
         continue ;;
-      vet)
-        # go vet -vettool=FILE executes an arbitrary binary
-        if printf '%s' "$CLEAN" | grep -qE '\s-vettool\b'; then exit 0; fi
+      list|vet)
+        # -toolexec executes arbitrary program as tool wrapper
+        # -vettool executes arbitrary binary as vet analyzer
+        if printf '%s' "$CLEAN" | grep -qE '\s-toolexec\b|\s-vettool\b'; then exit 0; fi
         continue ;;
     esac
     exit 0
@@ -698,7 +708,7 @@ for SEG in "${SEGMENTS[@]}"; do
       container) [[ "$PODMAN_ACT" =~ ^(ls|list|inspect|logs|stats|top|port|diff)$ ]] && continue ;;
       network)   [[ "$PODMAN_ACT" =~ ^(ls|list|inspect)$ ]] && continue ;;
       volume)    [[ "$PODMAN_ACT" =~ ^(ls|list|inspect)$ ]] && continue ;;
-      compose)   [[ "$PODMAN_ACT" =~ ^(ps|logs|ls|images|config|version)$ ]] && continue ;;
+      compose)   [[ "$PODMAN_ACT" =~ ^(ps|logs|ls|images|version)$ ]] && continue ;;
       pod)       [[ "$PODMAN_ACT" =~ ^(ls|list|inspect|logs|stats|top)$ ]] && continue ;;
     esac
     exit 0
