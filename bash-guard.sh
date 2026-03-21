@@ -269,7 +269,7 @@ for SEG in "${SEGMENTS[@]}"; do
   if [[ "$BASE" == "ip" ]]; then
     # -batch/-b reads commands from file (can contain any ip subcommand)
     if printf '%s' "$CLEAN" | grep -qE '(\s|^)(-b\b|-batch\b|--batch\b)'; then exit 0; fi
-    if printf '%s' "$CLEAN" | grep -qE '\b(add|del|delete|change|replace|flush|save|restore|set|append)\b'; then
+    if printf '%s' "$CLEAN" | grep -qE '\b(add|del|delete|change|replace|flush|save|restore|set|append|exec)\b'; then
       exit 0
     fi
     continue
@@ -279,7 +279,7 @@ for SEG in "${SEGMENTS[@]}"; do
   if [[ "$BASE" == "git" ]]; then
     # Block git -c (config override) — can set keys like core.pager,
     # core.fsmonitor, diff.external that execute arbitrary commands
-    if printf '%s' "$CLEAN" | grep -qE '(\s|^)git\s+.*\s-c\s'; then exit 0; fi
+    if printf '%s' "$CLEAN" | grep -qE '(\s)-c(\s|[^-\s])'; then exit 0; fi
 
     # Extract git subcommand, skipping common flags that precede it
     # e.g., 'git --no-pager log' → 'log', 'git -C /path diff' → 'diff'
@@ -427,7 +427,7 @@ for SEG in "${SEGMENTS[@]}"; do
   #            --smart-relinquish-var, --setup-keys, --update-catalog
   # Safe: everything else (filtering, display, query)
   if [[ "$BASE" == "journalctl" ]]; then
-    if printf '%s' "$CLEAN" | grep -qE -- '--(rotate|vacuum-size|vacuum-time|vacuum-files|flush|sync|relinquish-var|smart-relinquish-var|setup-keys|update-catalog)\b'; then
+    if printf '%s' "$CLEAN" | grep -qE -- '--(rotate|vacuum-size|vacuum-time|vacuum-files|flush|sync|relinquish-var|smart-relinquish-var|setup-keys|update-catalog|cursor-file)\b'; then
       exit 0
     fi
     continue
@@ -460,8 +460,8 @@ for SEG in "${SEGMENTS[@]}"; do
       [[ "$TAR_FIRST_ARG" == *t* ]] && TAR_HAS_LIST=true
       [[ "$TAR_FIRST_ARG" == *[cxruA]* ]] && TAR_HAS_DANGER=true
     fi
-    # --use-compress-program / -I executes arbitrary command even in list mode
-    if printf '%s' "$CLEAN" | grep -qE '(\s)-[a-zA-Z]*I|(\s)--use-compress-program\b'; then exit 0; fi
+    # These flags execute arbitrary commands even in list mode
+    if printf '%s' "$CLEAN" | grep -qE '(\s)-[a-zA-Z]*[IF]|(\s)--(use-compress-program|checkpoint-action|info-script|new-volume-script)\b'; then exit 0; fi
     if [[ "$TAR_HAS_LIST" == true ]]; then
       if [[ "$TAR_HAS_DANGER" == true ]]; then exit 0; fi
       continue

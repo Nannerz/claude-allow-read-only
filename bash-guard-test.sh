@@ -1390,6 +1390,8 @@ expect_allow 'ls && pwd'                   '&& still works'
 section "Security: git -c config injection"
 expect_block 'git -c core.pager=evil log'  'git -c (code injection)'
 expect_block 'git -c diff.external=evil diff'  'git -c diff.external'
+expect_block 'git -ccore.pager=evil log'   'git -c no space (bypass fix)'
+expect_block 'git log -c core.pager=evil'  'git -c after subcommand'
 # git -C (change dir) is still safe
 expect_allow 'git -C /tmp status'          'git -C (safe, changes dir)'
 
@@ -1423,6 +1425,7 @@ expect_allow 'less -N file.txt'
 expect_block 'less -o /tmp/log file.txt'      'less -o (log-file)'
 expect_block 'less -O /tmp/log file.txt'      'less -O (LOG-FILE)'
 expect_block 'less --log-file=/tmp/x file'    'less --log-file'
+expect_block 'less --LOG-FILE=/tmp/x file'    'less --LOG-FILE'
 
 section "Security: shuf -o writes to file"
 expect_allow 'shuf file.txt'
@@ -1459,13 +1462,26 @@ expect_block 'rg --pre /tmp/evil pattern .'  'rg --pre (code execution)'
 section "Security: sort --compress-program"
 expect_block 'sort --compress-program=evil file'  'sort --compress-program'
 
-section "Security: tar -I / --use-compress-program"
+section "Security: tar code-execution flags"
 expect_block 'tar -I /tmp/evil -tf archive'       'tar -I (compress program)'
 expect_block 'tar --use-compress-program=evil -tf archive' 'tar --use-compress-program'
+expect_block 'tar --checkpoint-action=exec=id -tf archive' 'tar --checkpoint-action=exec'
+expect_block 'tar -F ./evil.sh -tf archive'        'tar -F (info-script)'
+expect_block 'tar --info-script=./evil.sh -tf archive' 'tar --info-script'
+expect_block 'tar --new-volume-script=evil -tf archive' 'tar --new-volume-script'
 
-section "Security: ip -batch / -b"
+section "Security: ip exec / batch"
 expect_block 'ip -batch /tmp/cmds.txt'            'ip -batch'
 expect_block 'ip -b /tmp/cmds.txt'                'ip -b'
+expect_block 'ip --batch /tmp/cmds.txt'           'ip --batch (double-dash)'
+expect_block 'ip netns exec mynamespace bash'     'ip netns exec'
+expect_block 'ip vrf exec blue bash'              'ip vrf exec'
+
+section "Security: find -okdir"
+expect_block 'find . -okdir rm {} \;'              'find -okdir'
+
+section "Security: journalctl --cursor-file"
+expect_block 'journalctl --cursor-file=/tmp/x -n 1' 'journalctl --cursor-file'
 
 printf ' done'
 
