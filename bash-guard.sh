@@ -145,9 +145,9 @@ GH_ASK_REASON=""     # Reason string for gh write commands
 #   Kernel info:       lsmod modinfo
 #
 # Commands with flag-dependent safety that have their own handlers below:
-#   hostname, date, command, yq, xxd, less, shuf, uniq, rg
+#   hostname, date, command, yq, xxd, less, shuf, uniq, rg, nm, man
 # ---------------------------------------------------------------------------
-SAFE_RE='^(ls|cat|head|tail|wc|file|stat|which|pwd|echo|printenv|realpath|basename|dirname|diff|cut|tr|cd|grep|true|false|test|\[|jq|whoami|uname|id|groups|tty|getent|sha256sum|sha512sum|sha1sum|md5sum|b2sum|cksum|hexdump|od|strings|readlink|du|df|free|uptime|nproc|lscpu|lsblk|column|seq|printf|type|hash|man|whatis|apropos|tput|clear|rev|tac|comm|paste|join|fold|nl|base64|nslookup|dig|host|ps|pgrep|pidof|pstree|lsof|ss|netstat|who|w|last|vmstat|iostat|mpstat|lspci|lsusb|locale|apt-cache|dpkg-query|findmnt|nm|objdump|readelf|lsmod|modinfo|more|numfmt|expand|unexpand|tsort|lsns)$'
+SAFE_RE='^(ls|cat|head|tail|wc|file|stat|which|pwd|echo|printenv|realpath|basename|dirname|diff|cut|tr|cd|grep|true|false|test|\[|jq|whoami|uname|id|groups|tty|getent|sha256sum|sha512sum|sha1sum|md5sum|b2sum|cksum|hexdump|od|strings|readlink|du|df|free|uptime|nproc|lscpu|lsblk|column|seq|printf|type|hash|whatis|apropos|tput|clear|rev|tac|comm|paste|join|fold|nl|base64|nslookup|dig|host|ps|pgrep|pidof|pstree|lsof|ss|netstat|who|w|last|vmstat|iostat|mpstat|lspci|lsusb|locale|apt-cache|dpkg-query|findmnt|objdump|readelf|lsmod|modinfo|more|numfmt|expand|unexpand|tsort|lsns)$'
 
 for SEG in "${SEGMENTS[@]}"; do
   SEG=$(printf '%s' "$SEG" | sed 's/^[[:space:]]*//')
@@ -215,6 +215,18 @@ for SEG in "${SEGMENTS[@]}"; do
   # --- rg: safe UNLESS --pre (executes arbitrary preprocessor command) ---
   if [[ "$BASE" == "rg" ]]; then
     if printf '%s' "$CLEAN" | grep -qE '\s--pre\b'; then exit 0; fi
+    continue
+  fi
+
+  # --- nm: safe UNLESS --plugin (loads arbitrary shared library) ---
+  if [[ "$BASE" == "nm" ]]; then
+    if printf '%s' "$CLEAN" | grep -qE '\s--plugin\b'; then exit 0; fi
+    continue
+  fi
+
+  # --- man: safe UNLESS -P/--pager or -H/--html (executes arbitrary program) ---
+  if [[ "$BASE" == "man" ]]; then
+    if printf '%s' "$CLEAN" | grep -qE '(\s)-[^-[:space:]]*[PH]|(\s)--(pager|html)\b'; then exit 0; fi
     continue
   fi
 
@@ -572,7 +584,7 @@ for SEG in "${SEGMENTS[@]}"; do
     #   -f/--raw-field, -F/--field — auto-switches REST endpoints to POST
     #   --input — sends request body (implies write)
     if printf '%s' "$CLEAN" | grep -qE '^gh\s+api\b'; then
-      if printf '%s' "$CLEAN" | grep -qE '(\s)(-X\s*|-X=|--method\s+|--method=)(POST|PUT|PATCH|DELETE)\b'; then
+      if printf '%s' "$CLEAN" | grep -qiE '(\s)(-X\s*|-X=|--method\s+|--method=)(POST|PUT|PATCH|DELETE)\b'; then
         ALL_ALLOW=false; GH_ASK_REASON="gh api with explicit write method"; continue
       fi
       if printf '%s' "$CLEAN" | grep -qE '(\s)(-[fF]\s|--field\s|--field=|--raw-field\s|--raw-field=|--input\s|--input=)'; then

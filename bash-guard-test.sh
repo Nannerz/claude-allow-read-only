@@ -1483,6 +1483,24 @@ expect_block 'find . -okdir rm {} \;'              'find -okdir'
 section "Security: journalctl --cursor-file"
 expect_block 'journalctl --cursor-file=/tmp/x -n 1' 'journalctl --cursor-file'
 
+section "Security: nm --plugin"
+expect_allow 'nm a.out'
+expect_allow 'nm -C lib.so'
+expect_block 'nm --plugin /tmp/evil.so binary'     'nm --plugin (loads .so)'
+
+section "Security: man -P/-H execute programs"
+expect_allow 'man ls'
+expect_allow 'man -k search'
+expect_block 'man -P /tmp/evil ls'                  'man -P (pager exec)'
+expect_block 'man --pager=/tmp/evil ls'             'man --pager'
+expect_block 'man -H/tmp/evil ls'                   'man -H (html exec)'
+expect_block 'man --html=/tmp/evil ls'              'man --html'
+
+section "Security: gh api lowercase methods"
+expect_ask 'gh api /repos -X post'                  'gh api -X post (lowercase)'
+expect_ask 'gh api /repos -X delete'                'gh api -X delete (lowercase)'
+expect_ask 'gh api /repos --method=Post'            'gh api --method=Post (mixed case)'
+
 printf ' done'
 
 # ===========================================================================
