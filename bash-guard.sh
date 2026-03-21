@@ -39,6 +39,9 @@
 # =============================================================================
 set -euo pipefail
 
+# Resolve the directory containing this script (for bash/sh allowlist)
+GUARD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Read the JSON tool input from stdin
 INPUT=$(cat)
 CMD=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty')
@@ -64,8 +67,8 @@ if printf '%s' "$STRIPPED" | grep -qE '\$\(|`'; then
   exit 0
 fi
 
-# Bail on process substitution: <(...) executes the command inside
-if printf '%s' "$STRIPPED" | grep -qE '<\('; then
+# Bail on process substitution: <(...) and >(...) execute commands inside
+if printf '%s' "$STRIPPED" | grep -qE '[<>]\('; then
   exit 0
 fi
 
@@ -86,7 +89,7 @@ fi
 # =============================================================================
 # PHASE 2: Split into segments and classify each
 # =============================================================================
-# Split the command on shell operators (&&, ||, ;, |) into individual segments.
+# Split the command on shell operators (&&, ||, ;, |, &) into individual segments.
 # Each segment is classified independently. ALL must be read-only for the
 # overall command to be auto-allowed.
 #
@@ -94,8 +97,15 @@ fi
 # operators (though Phase 1 stripping mitigates most cases). This is always
 # over-conservative: produces unrecognized segments → falls through to prompt.
 
+# Remove safe &-containing redirections before splitting so they don't
+# trigger the & separator. E.g., '2>&1', '&>/dev/null' are not background ops.
+SPLIT_READY=$(printf '%s' "$STRIPPED" | sed -E \
+  -e 's/2>&1//g' \
+  -e 's/&>\/dev\/null//g' \
+  -e 's/[0-9]*>\/dev\/null//g')
+
 IFS=$'\n' read -r -d '' -a SEGMENTS < <(
-  printf '%s' "$STRIPPED" | sed -E 's/(\|\||&&|[;|])/\n/g' && printf '\0'
+  printf '%s' "$SPLIT_READY" | sed -E 's/(\|\||&&|[;&|])/\n/g' && printf '\0'
 ) || true
 
 ALL_ALLOW=true       # Set to false if any segment triggers "ask"
@@ -108,6 +118,7 @@ GH_ASK_REASON=""     # Reason string for gh write commands
 # Categories:
 #   Text processing: cat head tail wc grep rg diff uniq cut tr rev tac comm
 #                    paste join fold nl column seq printf echo base64
+#                    less more shuf numfmt expand unexpand tsort
 #   File info:       ls file stat readlink du df basename dirname realpath
 #   System info:     pwd whoami uname id groups tty uptime
 #                    free nproc lscpu lsblk printenv locale
@@ -116,10 +127,11 @@ GH_ASK_REASON=""     # Reason string for gh write commands
 #   User info:       who w last
 #   System stats:    vmstat iostat mpstat
 #   Hardware info:   lspci lsusb
-#   Filesystem info: findmnt
+#   Filesystem info: findmnt lsns
 #   Package query:   apt-cache dpkg-query
 #   Lookup:          which type hash man whatis apropos getent
-#   Crypto/encoding: sha256sum sha1sum md5sum cksum xxd hexdump od strings
+#   Crypto/encoding: sha256sum sha512sum sha1sum md5sum b2sum cksum
+#                    hexdump od strings
 #   DNS:             nslookup dig host
 #   Shell builtins:  cd true false test [ tput clear
 #   Structured data: jq
@@ -127,15 +139,21 @@ GH_ASK_REASON=""     # Reason string for gh write commands
 #   Kernel info:       lsmod modinfo
 #
 # Commands with flag-dependent safety that have their own handlers below:
-#   hostname, date, command, yq
+#   hostname, date, command, yq, xxd
 # ---------------------------------------------------------------------------
-SAFE_RE='^(ls|cat|head|tail|wc|file|stat|which|pwd|echo|printenv|realpath|basename|dirname|diff|uniq|cut|tr|cd|grep|rg|true|false|test|\[|jq|whoami|uname|id|groups|tty|getent|sha256sum|sha1sum|md5sum|cksum|xxd|hexdump|od|strings|readlink|du|df|free|uptime|nproc|lscpu|lsblk|column|seq|printf|type|hash|man|whatis|apropos|tput|clear|rev|tac|comm|paste|join|fold|nl|base64|nslookup|dig|host|ps|pgrep|pidof|pstree|lsof|ss|netstat|who|w|last|vmstat|iostat|mpstat|lspci|lsusb|locale|apt-cache|dpkg-query|findmnt|nm|objdump|readelf|lsmod|modinfo)$'
+SAFE_RE='^(ls|cat|head|tail|wc|file|stat|which|pwd|echo|printenv|realpath|basename|dirname|diff|uniq|cut|tr|cd|grep|rg|true|false|test|\[|jq|whoami|uname|id|groups|tty|getent|sha256sum|sha512sum|sha1sum|md5sum|b2sum|cksum|hexdump|od|strings|readlink|du|df|free|uptime|nproc|lscpu|lsblk|column|seq|printf|type|hash|man|whatis|apropos|tput|clear|rev|tac|comm|paste|join|fold|nl|base64|nslookup|dig|host|ps|pgrep|pidof|pstree|lsof|ss|netstat|who|w|last|vmstat|iostat|mpstat|lspci|lsusb|locale|apt-cache|dpkg-query|findmnt|nm|objdump|readelf|lsmod|modinfo|less|more|shuf|numfmt|expand|unexpand|tsort|lsns)$'
 
 for SEG in "${SEGMENTS[@]}"; do
   SEG=$(printf '%s' "$SEG" | sed 's/^[[:space:]]*//')
   [[ -z "$SEG" ]] && continue
 
   # Strip env var prefixes: FOO=bar BAR=baz command ... → command ...
+  # But first bail if any dangerous env vars are set — these can inject code
+  # execution into otherwise-safe commands (e.g., PAGER="cmd" git log,
+  # LESSOPEN="| cmd" less file, GIT_EXTERNAL_DIFF="cmd" git diff)
+  if printf '%s' "$SEG" | grep -qiE '^(PAGER|MANPAGER|GIT_EXTERNAL_DIFF|GIT_SSH_COMMAND|GIT_EDITOR|VISUAL|EDITOR|LESSOPEN|LESSCLOSE|GIT_PAGER|BROWSER)='; then
+    exit 0
+  fi
   CLEAN=$(printf '%s' "$SEG" | sed -E 's/^([A-Za-z_][A-Za-z0-9_]*=[^ ]* +)*//')
   BASE=$(printf '%s' "$CLEAN" | awk '{print $1}')
   # Handle absolute/relative paths (e.g., /usr/bin/ls → ls)
@@ -188,6 +206,12 @@ for SEG in "${SEGMENTS[@]}"; do
     continue
   fi
 
+  # --- xxd: safe UNLESS -r (reverse mode can write files) ---
+  if [[ "$BASE" == "xxd" ]]; then
+    if printf '%s' "$CLEAN" | grep -qE '(\s|^)-[^-[:space:]]*r'; then exit 0; fi
+    continue
+  fi
+
   # --- find: safe UNLESS dangerous action flags are present ---
   # Dangerous: -delete (removes files), -exec/-execdir/-ok/-okdir (runs commands),
   #            -fls/-fprint/-fprint0/-fprintf (writes results to files)
@@ -222,13 +246,20 @@ for SEG in "${SEGMENTS[@]}"; do
 
   # --- git: subcommand-dependent classification ---
   if [[ "$BASE" == "git" ]]; then
+    # Block git -c (config override) — can set keys like core.pager,
+    # core.fsmonitor, diff.external that execute arbitrary commands
+    if printf '%s' "$CLEAN" | grep -qE '(\s|^)git\s+.*\s-c\s'; then exit 0; fi
+
     # Extract git subcommand, skipping common flags that precede it
     # e.g., 'git --no-pager log' → 'log', 'git -C /path diff' → 'diff'
-    GIT_SUB=$(printf '%s' "$CLEAN" | sed -E 's/^git\s+//' | sed -E 's/^(--no-pager\s+|-[cC]\s+[^ ]+\s+)*//' | awk '{print $1}')
+    GIT_SUB=$(printf '%s' "$CLEAN" | sed -E 's/^git\s+//' | sed -E 's/^(--no-pager\s+|-C\s+[^ ]+\s+)*//' | awk '{print $1}')
+
+    # Block --output flag (writes to file) — used by diff, log, show
+    if printf '%s' "$CLEAN" | grep -qE '\s--output\b'; then exit 0; fi
 
     # Always-safe git subcommands (purely read-only, no flags can write)
     case "$GIT_SUB" in
-      diff|log|show|status|rev-parse|describe|shortlog|blame|ls-files|ls-tree|cat-file|rev-list|name-rev|for-each-ref|show-ref|ls-remote)
+      diff|log|show|status|rev-parse|describe|shortlog|blame|ls-files|ls-tree|cat-file|rev-list|name-rev|for-each-ref|show-ref|ls-remote|merge-base|cherry|count-objects|diff-tree|diff-files|diff-index|verify-commit|verify-tag|whatchanged)
         continue ;;
     esac
 
@@ -245,16 +276,24 @@ for SEG in "${SEGMENTS[@]}"; do
     # Bare 'git branch' or with -r/-a/-v/--list just lists branches
     if [[ "$GIT_SUB" == "branch" ]]; then
       if printf '%s' "$CLEAN" | grep -qE '\s-[^-[:space:]]*[dDmMcCuf]'; then exit 0; fi
-      if printf '%s' "$CLEAN" | grep -qE '\s--(set-upstream-to|unset-upstream|edit-description|force)\b'; then exit 0; fi
+      if printf '%s' "$CLEAN" | grep -qE '\s--(delete|move|copy|set-upstream-to|unset-upstream|edit-description|force)\b'; then exit 0; fi
       continue
     fi
 
-    # git tag: safe for listing, dangerous with creation/deletion flags
+    # git tag: safe for listing/verifying, dangerous for creation/deletion
     # -a (annotate), -s (sign), -d (delete), -f (force) are write operations
-    # Bare 'git tag' or with -l/-n/--list/--verify just lists or verifies tags
+    # 'git tag NAME' (no flags) creates a lightweight tag — also dangerous
+    # Safe only with: bare 'git tag', -l/--list, -n, --verify, --contains,
+    # --merged, --no-merged, --points-at, --sort
     if [[ "$GIT_SUB" == "tag" ]]; then
       if printf '%s' "$CLEAN" | grep -qE '\s-[^-[:space:]]*[asdf]'; then exit 0; fi
-      continue
+      if printf '%s' "$CLEAN" | grep -qE '\s--(delete|annotate|sign|force)\b'; then exit 0; fi
+      if printf '%s' "$CLEAN" | grep -qE '\s(-[^-[:space:]]*[ln]|--list|--verify|--contains|--merged|--no-merged|--points-at|--sort)\b'; then continue; fi
+      # Bare 'git tag' lists all tags
+      TAG_REST=$(printf '%s' "$CLEAN" | sed -E 's/.*\btag(\s|$)//')
+      if [[ -z "$TAG_REST" || "$TAG_REST" =~ ^[[:space:]]*$ ]]; then continue; fi
+      # Anything else could be tag creation → block
+      exit 0
     fi
 
     # git remote: safe for querying, dangerous for structural changes
@@ -496,7 +535,7 @@ for SEG in "${SEGMENTS[@]}"; do
     #   -f/--raw-field, -F/--field — auto-switches REST endpoints to POST
     #   --input — sends request body (implies write)
     if printf '%s' "$CLEAN" | grep -qE '^gh\s+api\b'; then
-      if printf '%s' "$CLEAN" | grep -qE '(\s)(-X\s+|-X=|--method\s+|--method=)(POST|PUT|PATCH|DELETE)\b'; then
+      if printf '%s' "$CLEAN" | grep -qE '(\s)(-X\s*|-X=|--method\s+|--method=)(POST|PUT|PATCH|DELETE)\b'; then
         ALL_ALLOW=false; GH_ASK_REASON="gh api with explicit write method"; continue
       fi
       if printf '%s' "$CLEAN" | grep -qE '(\s)(-[fF]\s|--field\s|--field=|--raw-field\s|--raw-field=|--input\s|--input=)'; then
@@ -514,15 +553,20 @@ for SEG in "${SEGMENTS[@]}"; do
 
   # --- bash/sh: allow running bash-guard scripts only ---
   # bash can execute arbitrary code, so it must block by default.
-  # Exception: the guard's own scripts (bash-guard.sh, bash-guard-test.sh)
-  # are read-only (stdin→stdout) and safe to auto-allow. This prevents
-  # unnecessary permission prompts when testing the guard in pipelines
-  # like: echo '...' | bash bash-guard.sh
+  # Exception: the guard's own scripts in GUARD_DIR are read-only
+  # (stdin→stdout) and safe to auto-allow. Checks full resolved path
+  # to prevent basename spoofing from other directories.
   if [[ "$BASE" == "bash" || "$BASE" == "sh" ]]; then
     SCRIPT_ARG=$(printf '%s' "$CLEAN" | awk '{print $2}')
     SCRIPT_BASE=$(basename "$SCRIPT_ARG" 2>/dev/null || true)
     case "$SCRIPT_BASE" in
-      bash-guard.sh|bash-guard-test.sh) continue ;;
+      bash-guard.sh|bash-guard-test.sh)
+        # Resolve to absolute path and verify it's in GUARD_DIR
+        SCRIPT_REAL=$(realpath "$SCRIPT_ARG" 2>/dev/null || true)
+        if [[ "$SCRIPT_REAL" == "$GUARD_DIR/bash-guard.sh" || "$SCRIPT_REAL" == "$GUARD_DIR/bash-guard-test.sh" ]]; then
+          continue
+        fi
+        ;;
     esac
     exit 0
   fi
@@ -531,7 +575,7 @@ for SEG in "${SEGMENTS[@]}"; do
   if [[ "$BASE" == "go" ]]; then
     GO_SUB=$(printf '%s' "$CLEAN" | sed -E 's/^go\s+//' | awk '{print $1}')
     case "$GO_SUB" in
-      version|env|doc|list|vet|tool|help|--help|--version) continue ;;
+      version|env|doc|list|vet|help|--help|--version) continue ;;
     esac
     exit 0
   fi
@@ -540,7 +584,7 @@ for SEG in "${SEGMENTS[@]}"; do
   if [[ "$BASE" == "cargo" ]]; then
     CARGO_SUB=$(printf '%s' "$CLEAN" | sed -E 's/^cargo\s+//' | awk '{print $1}')
     case "$CARGO_SUB" in
-      tree|metadata|search|doc|version|verify-project|read-manifest|help|--help|--version) continue ;;
+      tree|metadata|search|version|verify-project|read-manifest|help|--help|--version) continue ;;
     esac
     exit 0
   fi
@@ -558,7 +602,10 @@ for SEG in "${SEGMENTS[@]}"; do
   if [[ "$BASE" == "pnpm" ]]; then
     PNPM_SUB=$(printf '%s' "$CLEAN" | sed -E 's/^pnpm\s+//' | awk '{print $1}')
     case "$PNPM_SUB" in
-      list|ls|why|outdated|audit|help|--help|--version) continue ;;
+      list|ls|why|outdated|help|--help|--version) continue ;;
+      audit)
+        if printf '%s' "$CLEAN" | grep -qE '\bfix\b'; then exit 0; fi
+        continue ;;
     esac
     exit 0
   fi
@@ -567,7 +614,7 @@ for SEG in "${SEGMENTS[@]}"; do
   if [[ "$BASE" == "brew" ]]; then
     BREW_SUB=$(printf '%s' "$CLEAN" | sed -E 's/^brew\s+//' | awk '{print $1}')
     case "$BREW_SUB" in
-      list|ls|info|search|deps|uses|outdated|doctor|config|desc|cat|log|home|help|--help|--version) continue ;;
+      list|ls|info|search|deps|uses|outdated|doctor|config|desc|cat|log|help|--help|--version) continue ;;
     esac
     exit 0
   fi

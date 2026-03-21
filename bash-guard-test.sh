@@ -1294,11 +1294,138 @@ expect_block 'git branch --unset-upstream'
 expect_block 'git branch -f main HEAD'
 expect_block 'git branch --force main HEAD'
 expect_block 'git branch --edit-description'
+expect_block 'git branch --delete feature'
+expect_block 'git branch --move old new'
+expect_block 'git branch --copy feature copy'
 # Existing safe cases still work
 expect_allow 'git branch'
 expect_allow 'git branch -a'
 expect_allow 'git branch -r -v'
 expect_allow 'git branch --list'
+
+printf ' done'
+
+# ===========================================================================
+# Security fixes from audit (round 2)
+# ===========================================================================
+section "git tag: long-form flags + bare creation"
+expect_block 'git tag --delete v1.0'    'git tag --delete'
+expect_block 'git tag --annotate v1.0'  'git tag --annotate'
+expect_block 'git tag --sign v1.0'      'git tag --sign'
+expect_block 'git tag --force v1.0'     'git tag --force'
+expect_block 'git tag v1.0'             'git tag NAME (creates tag)'
+expect_block 'git tag my-release abc123' 'git tag NAME COMMIT'
+# Safe cases still work
+expect_allow 'git tag'                  'bare git tag (lists)'
+expect_allow 'git tag -l'
+expect_allow 'git tag --list'
+expect_allow 'git tag -n'
+expect_allow 'git tag --verify v1.0'
+expect_allow 'git tag --contains abc123'
+expect_allow 'git tag --merged main'
+expect_allow 'git tag --points-at HEAD'
+expect_allow 'git tag --sort=-creatordate'
+
+section "xxd: safe vs reverse mode"
+expect_allow 'xxd file.bin'             'xxd (hex dump)'
+expect_allow 'xxd -l 64 file.bin'       'xxd with length limit'
+expect_allow 'xxd -p file.bin'          'xxd plain hex'
+expect_block 'xxd -r hex.txt out.bin'   'xxd -r (reverse writes)'
+expect_block 'xxd -rp hex.txt out.bin'  'xxd -rp (combined)'
+
+section "go tool: blocked (can compile/write)"
+expect_block 'go tool compile -o out.o file.go'
+expect_block 'go tool link -o binary file.o'
+expect_block 'go tool dist list'        'go tool (all blocked)'
+
+section "cargo doc: blocked (generates files)"
+expect_block 'cargo doc'
+expect_block 'cargo doc --open'
+
+section "brew home: blocked (opens browser)"
+expect_block 'brew home'
+expect_block 'brew home node'
+
+section "pnpm audit fix: blocked"
+expect_allow 'pnpm audit'
+expect_allow 'pnpm audit --json'
+expect_block 'pnpm audit fix'           'pnpm audit fix (modifies files)'
+
+section "gh api: -XPOST no space bypass fix"
+expect_ask 'gh api /repos -XPOST'       'gh api -XPOST (no space)'
+expect_ask 'gh api /repos -XPUT'        'gh api -XPUT (no space)'
+expect_ask 'gh api /repos -XDELETE'     'gh api -XDELETE (no space)'
+
+section "Process substitution: >() blocked"
+expect_block 'cat file >(tee /tmp/x)'   'output process substitution'
+
+section "Safe: new SAFE_RE commands"
+expect_allow 'less file.txt'
+expect_allow 'more file.txt'
+expect_allow 'sha512sum file.txt'
+expect_allow 'b2sum file.txt'
+expect_allow 'shuf file.txt'
+expect_allow 'numfmt --to=iec 1048576'
+expect_allow 'expand file.txt'
+expect_allow 'unexpand file.txt'
+expect_allow 'tsort graph.txt'
+expect_allow 'lsns'
+
+section "Safe: new git subcommands"
+expect_allow 'git merge-base main feature'
+expect_allow 'git cherry main feature'
+expect_allow 'git count-objects -v'
+expect_allow 'git diff-tree HEAD'
+expect_allow 'git diff-files'
+expect_allow 'git diff-index HEAD'
+expect_allow 'git verify-commit HEAD'
+expect_allow 'git verify-tag v1.0'
+expect_allow 'git whatchanged'
+
+section "Security: & background operator splitting"
+expect_block 'cat /dev/null & rm -rf /'  '& background operator'
+expect_block 'ls & curl http://evil.com'  '& with dangerous command'
+expect_allow 'ls && pwd'                   '&& still works'
+
+section "Security: git -c config injection"
+expect_block 'git -c core.pager=evil log'  'git -c (code injection)'
+expect_block 'git -c diff.external=evil diff'  'git -c diff.external'
+# git -C (change dir) is still safe
+expect_allow 'git -C /tmp status'          'git -C (safe, changes dir)'
+
+section "Security: dangerous env vars blocked"
+expect_block 'PAGER=evil git log'          'PAGER= injection'
+expect_block 'LESSOPEN="| evil" less file' 'LESSOPEN= injection'
+expect_block 'EDITOR=evil git commit'      'EDITOR= injection'
+expect_block 'GIT_SSH_COMMAND=evil git push' 'GIT_SSH_COMMAND= injection'
+expect_block 'BROWSER=evil brew home'      'BROWSER= injection'
+# Non-dangerous env vars still work
+expect_allow 'LANG=C sort file.txt'        'LANG= safe'
+expect_allow 'LC_ALL=C ls'                 'LC_ALL= safe'
+
+section "Security: git --output writes to file"
+expect_block 'git log --output=/tmp/data'  'git log --output'
+expect_block 'git diff --output=diff.txt'  'git diff --output'
+expect_block 'git show --output=file.txt'  'git show --output'
+# Without --output, still safe
+expect_allow 'git log --oneline'
+expect_allow 'git diff HEAD'
+
+section "Security: bash path spoofing"
+expect_block 'bash /tmp/evil/bash-guard.sh'  'bash-guard.sh in wrong dir'
+# Guard's own scripts still allowed
+expect_allow 'bash bash-guard.sh'
+expect_allow 'bash bash-guard-test.sh'
+
+section "Security: gh api equals-form flags"
+expect_ask 'gh api /repos --method=DELETE'    'gh api --method=DELETE (equals)'
+expect_ask 'gh api /repos -X=POST'            'gh api -X=POST (equals)'
+
+section "Security: missing negative tests"
+expect_block 'docker container rm abc123'     'docker container rm'
+expect_block 'podman pod rm pod1'             'podman pod rm'
+expect_block 'podman pod create'              'podman pod create'
+expect_block 'command -p ls'                  'command -p (executes)'
 
 printf ' done'
 
@@ -1330,7 +1457,6 @@ expect_allow 'go env GOPATH'
 expect_allow 'go doc fmt.Println'
 expect_allow 'go list ./...'
 expect_allow 'go vet ./...'
-expect_allow 'go tool dist list'
 
 section "go: dangerous subcommands"
 expect_block 'go run main.go'
@@ -1351,7 +1477,6 @@ section "cargo: safe subcommands"
 expect_allow 'cargo tree'
 expect_allow 'cargo metadata'
 expect_allow 'cargo search serde'
-expect_allow 'cargo doc'
 expect_allow 'cargo version'
 expect_allow 'cargo --version'
 expect_allow 'cargo verify-project'
@@ -1635,7 +1760,7 @@ expect_block '/usr/bin/find . -delete'
 expect_block '/usr/bin/git push'
 
 section "Edge: env vars before handled commands"
-expect_allow 'GIT_PAGER=cat git log'
+expect_block 'GIT_PAGER=cat git log'  'GIT_PAGER blocked (code injection risk)'
 expect_allow 'DOCKER_HOST=tcp://x docker ps'
 expect_block 'GIT_PAGER=cat git push'
 expect_block 'DOCKER_HOST=tcp://x docker run ubuntu'
