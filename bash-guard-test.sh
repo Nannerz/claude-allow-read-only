@@ -1483,6 +1483,16 @@ expect_block 'find . -okdir rm {} \;'              'find -okdir'
 section "Security: journalctl --cursor-file"
 expect_block 'journalctl --cursor-file=/tmp/x -n 1' 'journalctl --cursor-file'
 
+section "Security: tar more exec/write flags"
+expect_block 'tar --to-command=evil -tf archive'    'tar --to-command'
+expect_block 'tar --index-file=/tmp/out -tf archive' 'tar --index-file'
+expect_block 'tar --rsh-command=evil -tf host:/a'   'tar --rsh-command'
+expect_block 'tar --rmt-command=evil -tf host:/a'   'tar --rmt-command'
+
+section "Security: git --upload-pack"
+expect_block 'git ls-remote --upload-pack=evil origin' 'git --upload-pack'
+expect_allow 'git ls-remote origin'                 'git ls-remote without --upload-pack'
+
 section "Security: nm --plugin"
 expect_allow 'nm a.out'
 expect_allow 'nm -C lib.so'

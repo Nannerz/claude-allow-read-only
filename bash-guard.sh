@@ -297,8 +297,9 @@ for SEG in "${SEGMENTS[@]}"; do
     # e.g., 'git --no-pager log' → 'log', 'git -C /path diff' → 'diff'
     GIT_SUB=$(printf '%s' "$CLEAN" | sed -E 's/^git\s+//' | sed -E 's/^(--no-pager\s+|-C\s+[^ ]+\s+)*//' | awk '{print $1}')
 
-    # Block --output flag (writes to file) — used by diff, log, show
-    if printf '%s' "$CLEAN" | grep -qE '\s--output\b'; then exit 0; fi
+    # Block flags that write files or execute programs across multiple subcommands
+    # --upload-pack/-u executes arbitrary program (used by ls-remote, fetch, etc.)
+    if printf '%s' "$CLEAN" | grep -qE '\s(--output|--upload-pack)\b'; then exit 0; fi
 
     # Always-safe git subcommands (purely read-only, no flags can write)
     case "$GIT_SUB" in
@@ -473,7 +474,7 @@ for SEG in "${SEGMENTS[@]}"; do
       [[ "$TAR_FIRST_ARG" == *[cxruA]* ]] && TAR_HAS_DANGER=true
     fi
     # These flags execute arbitrary commands even in list mode
-    if printf '%s' "$CLEAN" | grep -qE '(\s)-[a-zA-Z]*[IF]|(\s)--(use-compress-program|checkpoint-action|info-script|new-volume-script)\b'; then exit 0; fi
+    if printf '%s' "$CLEAN" | grep -qE '(\s)-[a-zA-Z]*[IF]|(\s)--(use-compress-program|checkpoint-action|info-script|new-volume-script|to-command|index-file|rsh-command|rmt-command)\b'; then exit 0; fi
     if [[ "$TAR_HAS_LIST" == true ]]; then
       if [[ "$TAR_HAS_DANGER" == true ]]; then exit 0; fi
       continue
