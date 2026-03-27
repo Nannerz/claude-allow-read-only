@@ -1,6 +1,6 @@
 {
   "name": "claude-allow-read-only",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Auto-allow verified read-only Bash commands via a PreToolUse hook",
   "author": {
     "name": "Nannerz"
