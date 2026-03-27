@@ -7,6 +7,5 @@
   },
   "repository": "https://github.com/Nannerz/claude-allow-read-only",
   "license": "MIT",
-  "keywords": ["hooks", "bash", "read-only", "security", "permissions"],
-  "hooks": "./hooks/hooks.json"
+  "keywords": ["hooks", "bash", "read-only", "security", "permissions"]
 }
