@@ -159,6 +159,20 @@ expect_block 'mycommand exec thing'
 
 ## Installation
 
+### As a plugin (recommended)
+
+```bash
+# Add the marketplace
+/plugin marketplace add Nannerz/claude-allow-read-only
+
+# Install the plugin
+/plugin install claude-allow-read-only@nannerz-plugins
+```
+
+The plugin auto-updates when new versions are pushed.
+
+### Manual
+
 Add to your Claude Code settings (`~/.claude/settings.json`):
 
 ```json

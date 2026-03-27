@@ -622,13 +622,13 @@ expect_allow 'git config --show-origin user.name'
 expect_allow 'git config --show-scope user.name'
 
 section "git config: dangerous"
-expect_block 'git config user.name "Nick"' 'git config set (bare)'
-expect_block 'git config --add user.name "Nick"'
+expect_block 'git config user.name "Testname"' 'git config set (bare)'
+expect_block 'git config --add user.name "Testname"'
 expect_block 'git config --unset user.name'
 expect_block 'git config --unset-all user.name'
 expect_block 'git config --edit'
 expect_block 'git config -e'
-expect_block 'git config --replace-all user.name "Nick"'
+expect_block 'git config --replace-all user.name "Testname"'
 expect_block 'git config --rename-section old new'
 expect_block 'git config --remove-section old'
 

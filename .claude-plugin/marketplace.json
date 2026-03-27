@@ -1,0 +1,14 @@
+{
+  "name": "nannerz-plugins",
+  "owner": {
+    "name": "Nannerz"
+  },
+  "plugins": [
+    {
+      "name": "claude-allow-read-only",
+      "source": "./",
+      "description": "Auto-allow verified read-only Bash commands via a PreToolUse hook",
+      "version": "1.0.0"
+    }
+  ]
+}

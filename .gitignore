@@ -3,3 +3,8 @@
 !bash-guard-test.sh
 !README.md
 !.gitignore
+!.claude-plugin/
+!.claude-plugin/plugin.json
+!.claude-plugin/marketplace.json
+!hooks/
+!hooks/hooks.json
